@@ -109,8 +109,10 @@ with the variable's name in the log.
 
 ## 4. Health check
 
-In **Health Checks**, enable it with path `/health` and port `8000`. It's the
-only route that needs no token.
+Leave Coolify's own health check **off**. It runs `curl` or `wget` inside the
+container, and the slim Python image ships neither, so every deploy would be
+rolled back as unhealthy. The image declares its own Docker `HEALTHCHECK`
+(Python hitting `/health`), which Docker and Coolify both report.
 
 ## 5. Deploy and verify
 
@@ -166,5 +168,6 @@ Ship them elsewhere if you need retention: Coolify's logs rotate.
 | `agent '…' references unknown mailbox` at start | Typo in an agent's `mailboxes`, or the mailbox was removed. |
 | `login failed` in `errors` | Wrong mailbox password, or the server wants an app password. |
 | `server lacks UIDPLUS` on delete | Your IMAP server can't expunge a single message safely; mailgrant refuses rather than risk others. Moving to trash still works if the server supports MOVE. |
+| Deploy rolled back, log says `curl: not found` / `wget: not found` | Coolify's health check is on. Turn it off; the image has its own. |
 | `no trash folder` on delete | Set `imap.trash_folder`, or create the folder. |
 | Agents get `404` for a mailbox you can see in the config | Not in that agent's grant. `mailgrant check` prints the matrix. |
