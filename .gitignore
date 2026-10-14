@@ -90,3 +90,4 @@ AGENTS.md
 sec.sarif
 
 .testing/
+docs/assets/src/node_modules

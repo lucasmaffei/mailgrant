@@ -1,6 +1,17 @@
-# mailgrant
+<h1 align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img alt="mailgrant — one email gateway for many AI agents, each holding keys to its own mailboxes" src="docs/assets/hero-light.png" width="1280">
+</picture>
+</h1>
 
-**One email gateway for many AI agents — each with its own mailboxes and permissions.**
+<p>
+  <a href="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-d4a63a">
+  <img alt="Docker image on GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-22364f?logo=docker&logoColor=white">
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-22364f?logo=python&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22364f"></a>
+</p>
 
 [Português](README.pt-BR.md) · [Deploy on Coolify](docs/deploy-coolify.md) · [Connect your agents](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
 
@@ -9,14 +20,10 @@ every mailbox **once**, then hand each agent a token that grants specific
 mailboxes and specific actions. Agents speak MCP (Streamable HTTP) or plain
 REST; mailgrant enforces the grant on every call and logs who did what.
 
-```
-  support-bot ─┐  token → [contact@]            read, send
-  finance-bot ─┼─ token → [billing@]            read           ┌──────────────┐
-  assistant  ──┘  token → [*]                   read, mark,    │ IMAP / SMTP  │
-        │                                       delete, send   │  (any host)  │
-        └──── MCP /mcp  or  REST ───▶  mailgrant  ───────────▶ └──────────────┘
-                                       grants · audit log
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.png">
+  <img alt="Agents with their own tokens and scopes go through mailgrant, which checks every call, hides mailboxes outside the grant, keeps the passwords and logs each operation" src="docs/assets/how-it-works-light.png" width="1280">
+</picture>
 
 ## Why
 

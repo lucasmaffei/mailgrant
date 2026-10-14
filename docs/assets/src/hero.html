@@ -1,0 +1,99 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="tokens.css">
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'dark'</script>
+<style>
+  body { width: 1280px; height: 440px; overflow: hidden; position: relative; }
+  .copy { position: absolute; left: 72px; top: 0; bottom: 0; width: 520px; display: flex; flex-direction: column; justify-content: center; }
+  .mark { display: flex; align-items: center; gap: 18px; }
+  .mark svg { width: 64px; height: 64px; flex: none; }
+  h1 { font-size: 92px; font-weight: 800; letter-spacing: -0.035em; line-height: 1; font-variation-settings: 'opsz' 96; }
+  p { margin-top: 26px; font-size: 26px; line-height: 1.32; color: var(--muted); max-width: 470px; font-variation-settings: 'opsz' 24; }
+  p strong { color: var(--text); font-weight: 600; }
+
+  .wall { position: absolute; right: 56px; top: 34px; display: grid; grid-template-columns: repeat(5, 112px); gap: 12px; perspective: 900px; }
+  .box { position: relative; height: 112px; }
+  .door, .inside { position: absolute; inset: 0; border-radius: 6px; }
+  .inside { background: var(--recess); overflow: hidden; }
+  .inside .env { position: absolute; left: 34px; right: 12px; bottom: 14px; height: 38px; background: var(--paper); border-radius: 3px; transform: rotate(-4deg); }
+  .inside .env::before { content: ''; position: absolute; inset: 0; background: linear-gradient(155deg, transparent 49%, rgba(20,32,46,.18) 50%, transparent 51%), linear-gradient(25deg, transparent 49%, rgba(20,32,46,.18) 50%, transparent 51%); }
+  .inside .env.b { bottom: 26px; transform: rotate(6deg); opacity: .8; }
+  .door { background: var(--door); border: 2px solid var(--door-edge); transform-origin: left center; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 12px 0 14px; }
+  .box.open .door { transform: rotateY(-58deg); box-shadow: 8px 0 0 rgba(0,0,0,.12); }
+  .plate { font-family: 'Big Shoulders Display', sans-serif; font-weight: 800; font-size: 20px; letter-spacing: .04em; color: var(--brass); }
+  .glass { width: 62px; height: 30px; border-radius: 3px; border: 2px solid var(--door-edge); background: repeating-linear-gradient(90deg, transparent 0 6px, color-mix(in srgb, var(--door-edge) 55%, transparent) 6px 8px); }
+  .keyhole { width: 14px; height: 20px; position: relative; }
+  .keyhole::before { content: ''; position: absolute; left: 2px; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--recess); }
+  .keyhole::after { content: ''; position: absolute; left: 5px; top: 7px; width: 4px; height: 12px; background: var(--recess); border-radius: 0 0 2px 2px; }
+
+  /* key in the open door's lock, tag hanging on a string below the plates */
+  .key { position: absolute; z-index: 6; }
+  .string { position: absolute; z-index: 5; inset: 0; pointer-events: none; }
+  .tag { position: absolute; z-index: 7; background: var(--paper); color: var(--ink-on-paper); border-radius: 5px 5px 16px 16px; padding: 18px 14px 10px; min-width: 128px; box-shadow: 0 3px 0 rgba(0,0,0,.2); transform-origin: 50% 0; }
+  :root[data-theme="light"] .tag { box-shadow: 0 0 0 1.5px var(--door-edge), 0 3px 0 rgba(20,32,46,.08); }
+  .tag::before { content: ''; position: absolute; left: 50%; top: 6px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; border: 2px solid var(--brass); background: var(--lobby); }
+  .tag .who { font-size: 17px; font-weight: 600; line-height: 1.1; text-align: center; }
+  .tag .can { font-size: 12.5px; color: #5b6b7c; margin-top: 3px; text-align: center; }
+</style></head>
+<body>
+  <div class="copy">
+    <div class="mark">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="3" y="3" width="58" height="58" rx="10" fill="var(--door)" stroke="var(--door-edge)" stroke-width="3"/>
+        <circle cx="32" cy="27" r="9" fill="var(--brass)"/>
+        <rect x="28.5" y="31" width="7" height="18" rx="2" fill="var(--brass)"/>
+      </svg>
+      <h1>mailgrant</h1>
+    </div>
+    <p>One email gateway for many AI agents. <strong>Each one holds keys to its own mailboxes</strong>, and only to those.</p>
+  </div>
+
+  <div class="wall" id="wall"></div>
+
+<script>
+  // 15 boxes; three are open, each with the key of the agent granted to it.
+  const open = { 1: 0, 3: 1, 7: 2 };
+  const tags = [
+    { who: 'support-bot', can: 'read, mark, send', tilt: -4 },
+    { who: 'finance-bot', can: 'read', tilt: 5 },
+    { who: 'assistant', can: 'read, mark, delete, send', tilt: -3 },
+  ];
+  const wall = document.getElementById('wall');
+  for (let i = 0; i < 15; i++) {
+    const b = document.createElement('div');
+    b.className = 'box' + (i in open ? ' open' : '');
+    b.innerHTML = (i in open ? '<div class="inside"><div class="env b"></div><div class="env"></div></div>' : '') +
+      `<div class="door"><span class="plate">${101 + i}</span><span class="glass"></span><span class="keyhole"></span></div>`;
+    wall.appendChild(b);
+  }
+  const NS = 'http://www.w3.org/2000/svg';
+  const strings = document.createElementNS(NS, 'svg');
+  strings.setAttribute('class', 'string');
+  strings.setAttribute('width', 1280); strings.setAttribute('height', 440);
+  document.body.appendChild(strings);
+  // Key hangs blade-up from the lock of the swung door; its bow carries the string.
+  const keySvg = `<svg width="22" height="50" viewBox="0 0 22 50"><rect x="8.5" y="0" width="5" height="30" rx="2" fill="var(--brass)"/><rect x="13" y="4" width="6" height="4" fill="var(--brass)"/><rect x="13" y="11" width="4" height="4" fill="var(--brass)"/><circle cx="11" cy="38" r="8" fill="none" stroke="var(--brass)" stroke-width="4.5"/></svg>`;
+  for (const [i, t] of Object.entries(open)) {
+    const r = wall.children[i].getBoundingClientRect();
+    const lockX = r.left + 25, lockY = r.top + 86;
+    const key = document.createElement('div');
+    key.className = 'key';
+    key.style.left = (lockX - 11) + 'px'; key.style.top = (lockY - 6) + 'px';
+    key.innerHTML = keySvg;
+    document.body.appendChild(key);
+    const bowX = lockX, bowY = lockY + 40;
+    // Tag top sits below the next row's number plate (row gap 12 + plate ~36).
+    const tagTop = r.bottom + 58, tagCx = r.left + r.width / 2 + 8;
+    const line = document.createElementNS(NS, 'path');
+    line.setAttribute('d', `M ${bowX} ${bowY} Q ${(bowX + tagCx) / 2 - 6} ${tagTop - 8} ${tagCx} ${tagTop + 10}`);
+    line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'var(--brass)'); line.setAttribute('stroke-width', '2');
+    strings.appendChild(line);
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.innerHTML = `<div class="who">${tags[t].who}</div><div class="can">${tags[t].can}</div>`;
+    document.body.appendChild(tag);
+    tag.style.left = (tagCx - tag.offsetWidth / 2) + 'px';
+    tag.style.top = tagTop + 'px';
+    tag.style.transform = `rotate(${tags[t].tilt}deg)`;
+  }
+</script>
+</body></html>

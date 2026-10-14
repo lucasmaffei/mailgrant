@@ -1,0 +1,127 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="tokens.css">
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'dark'</script>
+<style>
+  body { width: 1280px; height: 600px; overflow: hidden; position: relative; }
+  .col-title { position: absolute; top: 40px; font-size: 15px; color: var(--muted); font-weight: 600; }
+
+  .agent { position: absolute; left: 64px; width: 300px; background: var(--paper); color: var(--ink-on-paper); border-radius: 6px 22px 22px 6px; padding: 16px 20px 16px 38px; box-shadow: 0 3px 0 rgba(0,0,0,.2); }
+  :root[data-theme="light"] .agent { box-shadow: 0 0 0 1.5px var(--door-edge), 0 3px 0 rgba(20,32,46,.06); }
+  .agent::before { content: ''; position: absolute; left: 14px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; border: 2.5px solid var(--brass); }
+  .agent .who { font-size: 21px; font-weight: 600; }
+  .scopes { display: flex; gap: 6px; margin-top: 9px; }
+  .scope { font-size: 13px; padding: 3px 9px 4px; border-radius: 999px; border: 1.5px solid #14202e; }
+  .scope.no { border: 1.5px dashed #b5c0cc; color: #9aa8b6; }
+
+  .gate { position: absolute; left: 520px; top: 108px; width: 250px; height: 400px; background: var(--door); border: 2px solid var(--door-edge); border-radius: 10px; padding: 26px 24px; }
+  .gate .name { display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 800; letter-spacing: -.02em; }
+  .gate .name svg { width: 34px; height: 34px; }
+  .gate ul { list-style: none; margin-top: 22px; }
+  .gate li { font-size: 15.5px; line-height: 1.35; color: var(--muted); padding: 11px 0; border-top: 1.5px solid var(--door-edge); }
+  .gate li b { color: var(--text); font-weight: 600; }
+
+  .mbox { position: absolute; left: 948px; width: 268px; height: 84px; background: var(--door); border: 2px solid var(--door-edge); border-radius: 8px; display: flex; align-items: center; gap: 16px; padding: 0 18px; }
+  .mbox .plate { font-family: 'Big Shoulders Display', sans-serif; font-weight: 800; font-size: 26px; color: var(--brass); width: 44px; }
+  .mbox .addr { font-size: 16px; font-weight: 600; }
+  .mbox .note { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .mbox.locked { opacity: .55; }
+  .mbox .lock { margin-left: auto; width: 14px; height: 20px; position: relative; }
+  .mbox .lock::before { content: ''; position: absolute; left: 2px; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .mbox .lock::after { content: ''; position: absolute; left: 5px; top: 7px; width: 4px; height: 12px; background: var(--muted); }
+
+  svg.wires { position: absolute; inset: 0; z-index: 0; }
+  .agent, .gate, .mbox { z-index: 1; }
+
+  .stamp { position: absolute; z-index: 3; border: 3px solid var(--denied); color: var(--denied); border-radius: 10px; padding: 5px 11px 6px; transform: rotate(-7deg); white-space: nowrap; background: color-mix(in srgb, var(--lobby) 88%, transparent); }
+  .stamp .big { font-size: 20px; font-weight: 800; letter-spacing: .01em; line-height: 1.05; }
+  .stamp .small { font-size: 12.5px; font-weight: 600; }
+
+  .audit { position: absolute; left: 520px; top: 528px; width: 696px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; color: var(--muted); }
+  .audit .d { color: var(--denied); }
+  .audit .ok { color: var(--granted); }
+</style></head>
+<body>
+  <div class="col-title" style="left:64px">Agents, one token each</div>
+  <div class="col-title" style="left:520px">The gateway</div>
+  <div class="col-title" style="left:948px">Your mailboxes</div>
+
+  <div class="agent" id="a0" style="top:120px"><div class="who">support-bot</div><div class="scopes"></div></div>
+  <div class="agent" id="a1" style="top:262px"><div class="who">finance-bot</div><div class="scopes"></div></div>
+  <div class="agent" id="a2" style="top:404px"><div class="who">assistant</div><div class="scopes"></div></div>
+
+  <div class="gate" id="gate">
+    <div class="name"><svg viewBox="0 0 64 64"><rect x="3" y="3" width="58" height="58" rx="10" fill="var(--lobby)" stroke="var(--door-edge)" stroke-width="3"/><circle cx="32" cy="27" r="9" fill="var(--brass)"/><rect x="28.5" y="31" width="7" height="18" rx="2" fill="var(--brass)"/></svg>mailgrant</div>
+    <ul>
+      <li><b>Checks every call</b> against the token's mailboxes and scopes.</li>
+      <li><b>Hides the rest.</b> Mailboxes outside a grant look like they don't exist.</li>
+      <li><b>Keeps the passwords.</b> Agents never see them.</li>
+      <li><b>Writes an audit line</b> for each operation.</li>
+    </ul>
+  </div>
+
+  <div class="mbox" id="m0" style="top:108px"><span class="plate">101</span><div><div class="addr">contact@example.com</div><div class="note">support-bot, assistant</div></div></div>
+  <div class="mbox" id="m1" style="top:212px"><span class="plate">102</span><div><div class="addr">billing@example.com</div><div class="note">finance-bot, assistant</div></div></div>
+  <div class="mbox" id="m2" style="top:316px"><span class="plate">103</span><div><div class="addr">ops@example.com</div><div class="note">assistant</div></div></div>
+  <div class="mbox locked" id="m3" style="top:420px"><span class="plate">104</span><div><div class="addr">ceo@example.com</div><div class="note">no agent granted</div></div><span class="lock"></span></div>
+
+  <div class="audit" id="audit"></div>
+
+<script>
+  const ALL = ['read', 'mark', 'delete', 'send'];
+  const agents = [
+    { scopes: ['read', 'mark', 'send'], boxes: [0] },
+    { scopes: ['read'], boxes: [1] },
+    { scopes: ['read', 'mark', 'delete', 'send'], boxes: [0, 1, 2] },
+  ];
+  agents.forEach((a, i) => {
+    document.querySelector(`#a${i} .scopes`).innerHTML =
+      ALL.map(s => `<span class="scope ${a.scopes.includes(s) ? '' : 'no'}">${s}</span>`).join('');
+  });
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'wires'); svg.setAttribute('width', 1280); svg.setAttribute('height', 600);
+  document.body.prepend(svg);
+  const rect = id => document.getElementById(id).getBoundingClientRect();
+  const path = (d, color, dash) => {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color);
+    p.setAttribute('stroke-width', 3); p.setAttribute('stroke-linecap', 'round');
+    if (dash) p.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(p);
+  };
+  const curve = (x1, y1, x2, y2) => `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
+  const gate = rect('gate');
+  const brass = 'var(--brass)', red = 'var(--denied)';
+
+  // agent -> gateway, entering at evenly spaced ports
+  agents.forEach((a, i) => {
+    const r = rect(`a${i}`);
+    const portY = gate.top + 110 + i * 100;
+    path(curve(r.right, r.top + r.height / 2, gate.left, portY), brass);
+  });
+  // gateway -> granted mailboxes
+  [0, 1, 2].forEach(m => {
+    const r = rect(`m${m}`);
+    path(curve(gate.right, r.top + r.height / 2, r.left, r.top + r.height / 2), brass);
+  });
+  // nothing reaches ceo@
+  const ceo = rect('m3');
+  path(curve(gate.right, ceo.top + ceo.height / 2, ceo.left - 40, ceo.top + ceo.height / 2), 'var(--door-edge)', '2 9');
+
+  // finance-bot tries to send: stopped at the gateway
+  const fin = rect('a1');
+  const sy = fin.top + fin.height / 2 + 30;
+  path(`M ${fin.right - 30} ${fin.bottom} C ${fin.right + 40} ${sy + 34}, ${gate.left - 90} ${sy + 34}, ${gate.left - 8} ${sy + 24}`, red, '7 7');
+  const stamp = document.createElement('div');
+  stamp.className = 'stamp';
+  stamp.innerHTML = '<div class="big">denied</div><div class="small">no send scope</div>';
+  document.body.appendChild(stamp);
+  stamp.style.left = (gate.left - 158) + 'px';
+  stamp.style.top = (fin.bottom + 22) + 'px';
+
+  document.getElementById('audit').innerHTML =
+    '{"agent": "finance-bot", "action": "send", "outcome": <span class="d">"denied"</span>, "reason": "scope"}<br>' +
+    '{"agent": "assistant", "action": "get_message", "outcome": <span class="ok">"ok"</span>, "mailbox": "ops"}';
+</script>
+</body></html>

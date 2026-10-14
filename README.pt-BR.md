@@ -1,6 +1,17 @@
-# mailgrant
+<h1 align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
+  <img alt="mailgrant — um gateway de e-mail para vários agentes de IA, cada um com a chave das suas caixas" src="docs/assets/hero-light.png" width="1280">
+</picture>
+</h1>
 
-**Um gateway de e-mail para vários agentes de IA, cada um com as suas caixas e as suas permissões.**
+<p>
+  <a href="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-d4a63a">
+  <img alt="Docker image on GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-22364f?logo=docker&logoColor=white">
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-22364f?logo=python&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22364f"></a>
+</p>
 
 [English](README.md) · [Deploy no Coolify](docs/deploy-coolify.md) · [Conectar agentes](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
 
@@ -9,14 +20,10 @@ cadastra cada caixa **uma vez** e entrega a cada agente um token que libera
 caixas e ações específicas. Os agentes falam MCP (Streamable HTTP) ou REST; o
 mailgrant aplica a permissão em toda chamada e registra quem fez o quê.
 
-```
-  atendimento ─┐  token → [contato@]          read, send
-  financeiro ──┼─ token → [financeiro@]       read            ┌──────────────┐
-  assistente ──┘  token → [*]                 read, mark,     │ IMAP / SMTP  │
-        │                                     delete, send    │  (qualquer)  │
-        └──── MCP /mcp  ou  REST ───▶  mailgrant  ──────────▶ └──────────────┘
-                                       permissões · auditoria
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.png">
+  <img alt="Cada agente com seu token e seus escopos passa pelo mailgrant, que confere toda chamada, esconde as caixas fora da permissão, guarda as senhas e registra cada operação" src="docs/assets/how-it-works-light.png" width="1280">
+</picture>
 
 ## Por quê
 
