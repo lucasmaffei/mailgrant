@@ -1,7 +1,7 @@
 <h1 align="center">
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
-  <img alt="mailgrant — um gateway de e-mail para vários agentes de IA, cada um com a chave das suas caixas" src="docs/assets/hero-light.png" width="1280">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.pt-BR.png">
+  <img alt="mailgrant — um gateway de e-mail para vários agentes de IA, cada um com a chave das suas caixas" src="docs/assets/hero-light.pt-BR.png" width="1280">
 </picture>
 </h1>
 
@@ -21,8 +21,8 @@ caixas e ações específicas. Os agentes falam MCP (Streamable HTTP) ou REST; o
 mailgrant aplica a permissão em toda chamada e registra quem fez o quê.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.png">
-  <img alt="Cada agente com seu token e seus escopos passa pelo mailgrant, que confere toda chamada, esconde as caixas fora da permissão, guarda as senhas e registra cada operação" src="docs/assets/how-it-works-light.png" width="1280">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.pt-BR.png">
+  <img alt="Cada agente com seu token e seus escopos passa pelo mailgrant, que confere toda chamada, esconde as caixas fora da permissão, guarda as senhas e registra cada operação" src="docs/assets/how-it-works-light.pt-BR.png" width="1280">
 </picture>
 
 ## Por quê
@@ -52,6 +52,20 @@ Com o mailgrant:
 - **Auditoria** — só metadados, nunca assunto nem corpo.
 - **Sem estado** — sem banco de dados. A conexão abre por requisição e fecha.
 - **Segredos no ambiente** — `${VARIAVEL}` em qualquer ponto do config, ou o config inteiro em `MAILGRANT_CONFIG_YAML`.
+
+## Casos de uso
+
+| Caso | Caixas | Escopos |
+|---|---|---|
+| **Atendimento.** Um agente responde o endereço de contato dentro da conversa original, e a resposta fica em Enviados pra equipe ver. | `contato@` | `read`, `mark`, `send` |
+| **Financeiro.** Um agente lê boletos, notas e comprovantes pra conciliar pagamentos. Não responde nem apaga nada. | `financeiro@` | `read` |
+| **Resumo diário.** Um script agendado resume toda manhã o que chegou sem ler em todas as caixas. | `*` | `read` |
+| **Assistente pessoal.** Faz a triagem da sua caixa: marca o que já foi visto, manda newsletter pra lixeira, responde o rotineiro. | `voce@` | `read`, `mark`, `delete`, `send` |
+| **Agência com vários clientes.** O agente de cada cliente só alcança as caixas daquele cliente, mesmo rodando no mesmo servidor. | `cliente-a@`, `financeiro@cliente-a` | `read`, `send` |
+| **Entrada de leads.** Um agente comercial lê os avisos do formulário do site e responde os contatos novos pelo `vendas@`, sem enxergar mais nada. | `vendas@` | `read`, `send` |
+
+Em todos, trocar a senha de uma caixa, tirar o acesso de um agente ou somar
+uma caixa nova é uma mudança no gateway. Nenhum agente precisa ser mexido.
 
 ## Começo rápido
 
@@ -158,6 +172,42 @@ npx -y mcp-remote@0.1.38 https://mail-mcp.exemplo.com.br/mcp \
 Dê aos agentes a skill em [`.agents/skills/mailgrant/SKILL.md`](.agents/skills/mailgrant/SKILL.md):
 ela ensina a conferir o `whoami` primeiro, responder dentro da conversa e
 confirmar antes de apagar.
+
+### Deixe o próprio agente se configurar
+
+Gere o token do agente, ponha na variável `MAILGRANT_TOKEN` do ambiente onde
+ele roda e cole este prompt na conversa com ele (troque a URL):
+
+```text
+Conecte-se ao meu gateway de e-mail mailgrant.
+
+- Endpoint MCP: https://mail-mcp.exemplo.com.br/mcp
+- Seu token está na variável de ambiente MAILGRANT_TOKEN. Nunca o mostre, não o
+  grave em arquivo em texto puro e não o envie a lugar nenhum além do cabeçalho
+  Authorization desse endpoint.
+
+Passos:
+1. Descubra em qual harness você está rodando e adicione um servidor MCP remoto
+   chamado "mailgrant", com a URL acima e o cabeçalho
+   "Authorization: Bearer <token>":
+   - Claude Code: claude mcp add --scope user --transport http mailgrant <url> --header "Authorization: Bearer $MAILGRANT_TOKEN"
+   - Codex: codex mcp add mailgrant --url <url> --bearer-token-env-var MAILGRANT_TOKEN
+   - Outro: registre na sua configuração de MCP como servidor Streamable HTTP
+     com esse cabeçalho. Se você só consegue abrir servidores stdio, use
+     npx -y mcp-remote@0.1.38 <url> --transport http-only --header "Authorization:${AUTH_HEADER}"
+     com AUTH_HEADER="Bearer <token>" no env do processo.
+2. Instale a skill de uso que está em
+   https://github.com/lucasmaffei/mailgrant/tree/main/.agents/skills/mailgrant
+   (no Claude Code: ~/.claude/skills/mailgrant/SKILL.md). Se você não instala
+   skills, leia o arquivo e siga as regras dele.
+3. Recarregue os servidores MCP se o seu harness exigir e chame a ferramenta whoami.
+4. Me responda: qual agente você é, seus escopos, as caixas que pode usar e
+   quantas mensagens não lidas há em cada uma (inbox com unseen=true). Não
+   marque nada como lido, não apague e não envie nada.
+```
+
+Se o agente responder com o próprio nome, os escopos e as caixas certas, está
+pronto. Se receber `401`, o token não confere com nenhum hash do config.
 
 ## API REST
 

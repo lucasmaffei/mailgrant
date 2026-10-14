@@ -53,6 +53,20 @@ With mailgrant:
 - **Stateless** — no database. Connections open per request and close.
 - **Secrets from the environment** — `${VAR}` anywhere in the config, or the whole config in `MAILGRANT_CONFIG_YAML`.
 
+## Use cases
+
+| Case | Mailboxes | Scopes |
+|---|---|---|
+| **Customer support.** An agent answers the contact address inside the original thread, and the reply lands in Sent for the team to see. | `contact@` | `read`, `mark`, `send` |
+| **Finance.** An agent reads invoices and receipts to reconcile payments. It can't reply or delete anything. | `billing@` | `read` |
+| **Daily digest.** A scheduled script summarizes what arrived unread in every mailbox each morning. | `*` | `read` |
+| **Personal assistant.** Triages your own inbox: marks what you've seen, trashes newsletters, answers the routine. | `you@` | `read`, `mark`, `delete`, `send` |
+| **Agency with many clients.** Each client's agent reaches only that client's mailboxes, even on the same server. | `client-a@`, `billing@client-a` | `read`, `send` |
+| **Lead intake.** A sales agent reads website form notifications and answers new leads from `sales@`, and sees nothing else. | `sales@` | `read`, `send` |
+
+In every case, rotating a mailbox password, cutting an agent off or adding a
+new mailbox is a change to the gateway. No agent has to be touched.
+
 ## Quick start
 
 ```bash
@@ -157,6 +171,43 @@ npx -y mcp-remote@0.1.38 https://mail-mcp.example.com/mcp \
 
 Give your agents the skill in [`.agents/skills/mailgrant/SKILL.md`](.agents/skills/mailgrant/SKILL.md):
 it teaches them to check `whoami` first, reply inside threads and confirm before deleting.
+
+### Let the agent set itself up
+
+Mint the agent's token, put it in the `MAILGRANT_TOKEN` environment variable
+where the agent runs, and paste this prompt into a conversation with it (swap
+in your URL):
+
+```text
+Connect yourself to my mailgrant email gateway.
+
+- MCP endpoint: https://mail-mcp.example.com/mcp
+- Your token is in the MAILGRANT_TOKEN environment variable. Never print it,
+  never write it to a file in plain text, and never send it anywhere except the
+  Authorization header of that endpoint.
+
+Steps:
+1. Work out which agent harness you're running in and add a remote MCP server
+   named "mailgrant" with the URL above and the header
+   "Authorization: Bearer <token>":
+   - Claude Code: claude mcp add --scope user --transport http mailgrant <url> --header "Authorization: Bearer $MAILGRANT_TOKEN"
+   - Codex: codex mcp add mailgrant --url <url> --bearer-token-env-var MAILGRANT_TOKEN
+   - Anything else: register it in your MCP config as a Streamable HTTP server
+     with that header. If you can only launch stdio servers, use
+     npx -y mcp-remote@0.1.38 <url> --transport http-only --header "Authorization:${AUTH_HEADER}"
+     with AUTH_HEADER="Bearer <token>" in the process env.
+2. Install the usage skill from
+   https://github.com/lucasmaffei/mailgrant/tree/main/.agents/skills/mailgrant
+   (Claude Code: ~/.claude/skills/mailgrant/SKILL.md). If you can't install
+   skills, read the file and follow its rules.
+3. Reload your MCP servers if your harness needs it, then call the whoami tool.
+4. Tell me which agent you are, your scopes, the mailboxes you can use and how
+   many unread messages each one has (inbox with unseen=true). Don't mark
+   anything as read, delete or send anything.
+```
+
+If the agent answers with its own name, scopes and the right mailboxes, it's
+ready. A `401` means the token doesn't match any hash in the config.
 
 ## REST API
 
