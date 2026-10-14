@@ -51,7 +51,7 @@ With mailgrant:
 - **No spoofing** — `from_address` limited to the mailbox's own address and declared aliases.
 - **Audit log** — metadata only, never subjects or bodies.
 - **Stateless** — no database. Connections open per request and close.
-- **Secrets from the environment** — `${VAR}` anywhere in the config, or the whole config in `MAILGRANT_CONFIG_YAML`.
+- **Secrets from the environment** — `${VAR}` anywhere in the config, or the whole config in `MAILGRANT_CONFIG_B64` (base64, one line) / `MAILGRANT_CONFIG_YAML`.
 
 ## Use cases
 
@@ -265,7 +265,7 @@ Subjects and bodies are never logged.
 ## Security
 
 - **Run it behind TLS.** Tokens and mail travel through it. Compose binds `127.0.0.1` by default; expose it only through an HTTPS reverse proxy.
-- **The config holds mailbox passwords.** Prefer `${VAR}` references or `MAILGRANT_CONFIG_YAML` from your platform's secret store; never commit a filled-in `config.yaml`.
+- **The config holds mailbox passwords.** Prefer `${VAR}` references or `MAILGRANT_CONFIG_B64` from your platform's secret store; never commit a filled-in `config.yaml`.
 - **Tokens are compared in constant time**, and every candidate is compared on every request.
 - **IMAP command injection** is blocked at the boundary: control characters in folder names are rejected, folder names are quoted, UIDs are digits only.
 - **Delete never erases by surprise**: trash first, `UID EXPUNGE` for exactly one message, refusal on servers without UIDPLUS.

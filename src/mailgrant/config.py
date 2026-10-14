@@ -11,6 +11,8 @@ deployment platform instead of the file.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import os
 import re
@@ -200,15 +202,22 @@ class ConfigError(Exception):
 
 
 def load_config(path: str | None = None) -> Config:
-    # The whole YAML may come in MAILGRANT_CONFIG_YAML, which is how platforms
-    # such as Coolify hand over a secret without mounting a file. An explicit
-    # path still wins, so `mailgrant check --config` reads what it is told.
-    inline = None if path else os.environ.get("MAILGRANT_CONFIG_YAML")
-    cfg_path = (
-        "MAILGRANT_CONFIG_YAML"
-        if inline
-        else (path or os.environ.get("MAILGRANT_CONFIG") or DEFAULT_CONFIG_PATH)
-    )
+    # The whole YAML may come from the environment, which is how platforms hand
+    # over a secret without mounting a file. MAILGRANT_CONFIG_B64 exists because
+    # some of them (Coolify among them) write variables to a dotenv file, where
+    # a multi-line value breaks the parser. An explicit path still wins, so
+    # `mailgrant check --config` reads what it is told.
+    inline: str | None = None
+    source = ""
+    if not path and os.environ.get("MAILGRANT_CONFIG_B64"):
+        source = "MAILGRANT_CONFIG_B64"
+        try:
+            inline = base64.b64decode(os.environ[source], validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as e:
+            raise ConfigError(f"{source} is not valid base64-encoded UTF-8: {e}") from e
+    elif not path and os.environ.get("MAILGRANT_CONFIG_YAML"):
+        source, inline = "MAILGRANT_CONFIG_YAML", os.environ["MAILGRANT_CONFIG_YAML"]
+    cfg_path = source or path or os.environ.get("MAILGRANT_CONFIG") or DEFAULT_CONFIG_PATH
     if inline is None:
         p = Path(cfg_path)
         if not p.is_file():

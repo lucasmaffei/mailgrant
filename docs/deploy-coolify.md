@@ -89,17 +89,23 @@ In **Environment Variables**, add:
 
 | Name | Value | Notes |
 |---|---|---|
-| `MAILGRANT_CONFIG_YAML` | the whole content of `mailgrant.yaml` | Multi-line is fine. Mark it as a secret. |
+| `MAILGRANT_CONFIG_B64` | `base64 < mailgrant.yaml \| tr -d '\n'` | One line. Mark it as a secret and **literal**. |
 | `CONTACT_PASSWORD` | the mailbox password | One variable per `${…}` in the config. Secret. |
-| `WORKERS` | `2` | Optional. Uvicorn workers. |
+| `WORKERS` | `1` | Optional. Uvicorn workers; one is plenty for a handful of agents. |
 
-`MAILGRANT_CONFIG_YAML` takes precedence over any mounted file, so you never
-need a volume. A `${VAR}` without a matching variable stops the container at
-startup with the variable's name in the log.
+Why base64: Coolify writes environment variables to a dotenv file that Docker
+Compose parses, and a multi-line YAML value breaks it (`unexpected character
+in variable name`). One base64 line survives any platform.
+`MAILGRANT_CONFIG_YAML` (plain YAML) also exists for platforms that pass
+variables straight through.
+
+Either variable takes precedence over a mounted file, so you never need a
+volume. A `${VAR}` without a matching variable stops the container at startup
+with the variable's name in the log.
 
 > Prefer a file? Use **Storages → Add → File mount** at
-> `/etc/mailgrant/config.yaml` with the same content, and skip
-> `MAILGRANT_CONFIG_YAML`.
+> `/etc/mailgrant/config.yaml` with the YAML itself, and skip
+> `MAILGRANT_CONFIG_B64`.
 
 ## 4. Health check
 
@@ -130,10 +136,11 @@ Now connect your agents: [connect-agents.md](connect-agents.md).
 
 **Add a mailbox.** Add it under `mailboxes`, add its password variable, and
 either list it in an agent's `mailboxes` or rely on agents with `"*"`.
-Update `MAILGRANT_CONFIG_YAML` and **Restart**. No agent needs to change.
+Re-encode it into `MAILGRANT_CONFIG_B64` and **Restart**. No agent needs to change.
 
 **Add an agent.** `mailgrant token --name <agent>`, add the entry with the
-hash, update the variable, restart, give the token to the agent.
+hash, re-encode the config into the variable, restart, give the token to the
+agent.
 
 **Revoke an agent.** Remove its entry (or change the hash) and restart. Its
 token stops working immediately; no mailbox password changes.
@@ -154,6 +161,7 @@ Ship them elsewhere if you need retention: Coolify's logs rotate.
 
 | Symptom | Likely cause |
 |---|---|
+| Deploy fails with `failed to read …/.env: unexpected character` | A multi-line value in an environment variable. Use `MAILGRANT_CONFIG_B64`. |
 | Container exits at start with `references unset environment variable` | A `${VAR}` in the config has no Coolify variable. |
 | `agent '…' references unknown mailbox` at start | Typo in an agent's `mailboxes`, or the mailbox was removed. |
 | `login failed` in `errors` | Wrong mailbox password, or the server wants an app password. |

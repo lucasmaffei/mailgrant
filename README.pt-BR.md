@@ -51,7 +51,7 @@ Com o mailgrant:
 - **Sem falsificar remetente** — `from_address` limitado ao endereço da caixa e aos apelidos declarados.
 - **Auditoria** — só metadados, nunca assunto nem corpo.
 - **Sem estado** — sem banco de dados. A conexão abre por requisição e fecha.
-- **Segredos no ambiente** — `${VARIAVEL}` em qualquer ponto do config, ou o config inteiro em `MAILGRANT_CONFIG_YAML`.
+- **Segredos no ambiente** — `${VARIAVEL}` em qualquer ponto do config, ou o config inteiro em `MAILGRANT_CONFIG_B64` (base64, uma linha) / `MAILGRANT_CONFIG_YAML`.
 
 ## Casos de uso
 
@@ -263,7 +263,7 @@ Assunto e corpo nunca vão para o log.
 ## Segurança
 
 - **Rode atrás de TLS.** Tokens e e-mails passam por ele. O compose publica em `127.0.0.1` por padrão; exponha só por um proxy HTTPS.
-- **O config guarda senhas de caixas.** Prefira `${VAR}` ou `MAILGRANT_CONFIG_YAML` vindos do cofre de segredos da sua plataforma; nunca versione um `config.yaml` preenchido.
+- **O config guarda senhas de caixas.** Prefira `${VAR}` ou `MAILGRANT_CONFIG_B64` vindos do cofre de segredos da sua plataforma; nunca versione um `config.yaml` preenchido.
 - **Tokens comparados em tempo constante**, todos os candidatos a cada requisição.
 - **Injeção de comando IMAP** bloqueada na entrada: caracteres de controle recusados, nomes de pasta entre aspas, UID só com dígitos.
 - **Apagar nunca surpreende**: lixeira primeiro, `UID EXPUNGE` de uma única mensagem, recusa em servidores sem UIDPLUS.

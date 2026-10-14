@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.1
+
+- `MAILGRANT_CONFIG_B64`: the whole config as one base64 line. Coolify writes environment variables to a dotenv file, and a multi-line `MAILGRANT_CONFIG_YAML` broke the deploy. The Coolify guide now uses it.
+
 ## v0.6.0 — mailgrant
 
 First release as **mailgrant**, a fork of [docker-mailbox](https://github.com/psyb0t/docker-mailbox) v0.5.1.

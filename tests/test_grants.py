@@ -347,3 +347,14 @@ mailboxes:
 """
     with pytest.raises(ConfigError, match="more than once"):
         load_config(_write(tmp_path, body))
+
+
+def test_config_can_come_base64_encoded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import base64
+
+    monkeypatch.setenv("MAILGRANT_CONFIG_B64", base64.b64encode(CONFIG.encode()).decode())
+    monkeypatch.setenv("MAILGRANT_CONFIG_YAML", "mailboxes: []\n")  # B64 wins
+    assert [m.name for m in load_config().mailboxes] == ["alpha", "beta", "gamma"]
+    monkeypatch.setenv("MAILGRANT_CONFIG_B64", "not base64!")
+    with pytest.raises(ConfigError, match="MAILGRANT_CONFIG_B64"):
+        load_config()
