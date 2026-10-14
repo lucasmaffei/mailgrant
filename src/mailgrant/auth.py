@@ -1,8 +1,8 @@
-"""Bearer-token auth shared by the HTTP API and the streamable-HTTP MCP server.
+"""Bearer-token check for code that holds a FastAPI Request.
 
-An empty `cfg.auth.tokens` list denies access. Every request to a protected endpoint must carry
-`Authorization: Bearer <token>` matching one of the configured tokens
-(constant-time compared). 401 responses include `WWW-Authenticate: Bearer`.
+The app itself authenticates in the ASGI middleware (server.py); this helper
+applies the same rule — legacy `auth.tokens` only — for callers that build
+their own routes. Agents' tokens are resolved by grants.authenticate.
 """
 
 from __future__ import annotations

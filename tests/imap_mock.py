@@ -3,7 +3,7 @@
 Hand-rolled on `socketserver` (same approach as the SMTP capture sink in
 `test_smtp_integration.py`) rather than a container, so the suite has no
 external moving parts and starts in milliseconds. It speaks just enough of
-IMAP4rev1 for `mailboxd.imap_client` to drive it: CAPABILITY, LOGIN,
+IMAP4rev1 for `mailgrant.imap_client` to drive it: CAPABILITY, LOGIN,
 SELECT/EXAMINE, UID SEARCH/FETCH/STORE and EXPUNGE, including the `{N}`
 literal framing imaplib needs to parse FETCH bodies.
 

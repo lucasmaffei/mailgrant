@@ -1,56 +1,80 @@
-# mailboxd config — one entry per mailbox you want to control.
+# mailgrant config
 #
-# Each mailbox can declare any combination of:
-#   - imap: for reading / listing / deleting messages
-#   - smtp: for sending
-# At least one must be set.
+# Two lists matter: `mailboxes` (what the gateway can reach) and `agents`
+# (who may use which mailbox, and how). Any string can pull a value from the
+# environment with ${NAME} — keep passwords and tokens out of this file.
 #
-# `name` is the URL-safe handle the HTTP API and MCP tools refer to.
+# Check it without starting the server:  mailgrant check --config config.yaml
 
 log_level: INFO
 
-# Bearer-token auth applies to all non-/health endpoints, including /mcp.
-# Empty / omitted tokens deny access. Generate a token with openssl rand -hex 32.
-# Every configured token can access every mailbox in this instance.
-auth:
-  tokens:
-    - "replace-with-a-long-random-token"
-    # - "second-token-for-rotation"
+# One JSON line per mail operation on the `mailgrant.audit` logger:
+# agent, action, mailbox, uid, recipients, outcome. Never subjects or bodies.
+audit_log: true
 
+# ── Agents ─────────────────────────────────────────────────────────────────
+# Each agent is one bearer token. Mint one with:  mailgrant token --name <agent>
+#
+#   mailboxes: names or addresses from the list below, or "*" for every
+#              mailbox (including ones you add later).
+#   scopes:    read   — list, search, read (reading never marks as seen)
+#              mark   — set / clear the Seen flag
+#              delete — move to trash; `permanent: true` erases
+#              send   — send from the granted mailboxes
+#
+# A mailbox outside an agent's grant is invisible to it: it answers exactly
+# like a mailbox that doesn't exist.
+agents:
+  - name: support-bot
+    description: "Answers customer email"
+    token_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # placeholder: paste the hash from `mailgrant token`
+    mailboxes: [contact]
+    scopes: [read, mark, send]
+
+  - name: finance-bot
+    description: "Reads invoices, never writes"
+    token: "${FINANCE_BOT_TOKEN}"        # plaintext token from the environment
+    mailboxes: ["billing@example.com"]  # name or address, either works
+    scopes: [read]
+
+  - name: assistant
+    token: "${ASSISTANT_TOKEN}"
+    mailboxes: ["*"]
+    scopes: [read, mark, delete, send]
+
+# Legacy: tokens listed here get every scope on every mailbox. Kept for
+# configs written for docker-mailbox; prefer `agents`.
+# auth:
+#   tokens: ["${ADMIN_TOKEN}"]
+
+# ── Mailboxes ──────────────────────────────────────────────────────────────
+# Each mailbox needs imap, smtp, or both. `name` is the handle used by the
+# REST paths and by the MCP `mailbox` argument (the address works too).
 mailboxes:
-  - name: personal
-    description: "My main Gmail account"
-
+  - name: contact
+    description: "Public contact address"
     imap:
-      host: imap.gmail.com
+      host: mail.example.com
       port: 993
-      tls: ssl              # ssl | starttls | none   (default ssl)
-      username: me@gmail.com
-      password: "app-password-here"
-      default_folder: INBOX
-
+      tls: ssl                  # ssl | starttls | none   (default ssl)
+      username: contact@example.com
+      password: "${CONTACT_PASSWORD}"
+      # trash_folder: Trash     # default: the folder flagged \Trash, then Trash / Deleted Items / Lixeira
     smtp:
-      host: smtp.gmail.com
+      host: mail.example.com
       port: 465
-      tls: ssl              # ssl | starttls | none   (default starttls)
-      username: me@gmail.com
-      password: "app-password-here"
-      from_address: "Me <me@gmail.com>"
+      tls: ssl                  # ssl | starttls | none   (default starttls)
+      username: contact@example.com
+      password: "${CONTACT_PASSWORD}"
+      from_address: "Example <contact@example.com>"
+      # Extra From: addresses agents may use. Anything else is refused.
+      allowed_from: [sales@example.com]
+      # Keep a copy of every sent message here, so the people sharing the
+      # mailbox see what agents wrote. Plain SMTP never stores one.
+      save_copy_to: Sent
 
-  - name: work
-    description: "Work mailbox over IMAP+SMTP"
-
+  - name: billing
     imap:
       host: mail.example.com
-      port: 143
-      tls: starttls
-      username: me@example.com
-      password: "secret"
-
-    smtp:
-      host: mail.example.com
-      port: 587
-      tls: starttls
-      username: me@example.com
-      password: "secret"
-      from_address: me@example.com
+      username: billing@example.com
+      password: "${BILLING_PASSWORD}"

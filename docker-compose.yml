@@ -1,18 +1,19 @@
 services:
-  mailboxd:
-    image: psyb0t/mailbox:latest
+  mailgrant:
+    image: ghcr.io/lucasmaffei/mailgrant:latest
     build:
       context: .
-    container_name: mailboxd
+    container_name: mailgrant
     restart: unless-stopped
     ports:
-      - "${PORT:-8000}:8000"
+      # Loopback by default: put a TLS reverse proxy in front before exposing it.
+      - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WORKERS: ${WORKERS:-2}
-      MAILBOXD_CONFIG: /etc/mailboxd/config.yaml
+      MAILGRANT_CONFIG: /etc/mailgrant/config.yaml
     volumes:
-      - ${MAILBOXD_CONFIG:-./config.yaml}:/etc/mailboxd/config.yaml:ro
+      - ${MAILGRANT_CONFIG:-./config.yaml}:/etc/mailgrant/config.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
       interval: 30s

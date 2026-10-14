@@ -1,11 +1,11 @@
 {
-  "name": "@psyb0t/mailbox",
+  "name": "mailgrant-mcp",
   "version": "0.0.0",
-  "mcpName": "io.github.psyb0t/mailbox",
-  "description": "Connect an OpenClaw/MCP agent to a self-hosted docker-mailbox IMAP/SMTP control plane over MCP.",
+  "mcpName": "io.github.lucasmaffei/mailgrant",
+  "description": "stdio bridge from any MCP client to a self-hosted mailgrant gateway.",
   "type": "module",
   "bin": {
-    "mailbox-mcp": "bin/cli.js"
+    "mailgrant-mcp": "bin/cli.js"
   },
   "files": [
     "bin",
@@ -14,24 +14,24 @@
     "LICENSE"
   ],
   "license": "MIT",
-  "author": "psyb0t",
-  "homepage": "https://github.com/psyb0t/docker-mailbox",
+  "author": "Lucas Maffei",
+  "homepage": "https://github.com/lucasmaffei/mailgrant",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/psyb0t/docker-mailbox.git"
+    "url": "git+https://github.com/lucasmaffei/mailgrant.git"
   },
   "bugs": {
-    "url": "https://github.com/psyb0t/docker-mailbox/issues"
+    "url": "https://github.com/lucasmaffei/mailgrant/issues"
   },
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "mailbox",
     "email",
     "imap",
     "smtp",
     "openclaw",
-    "ai-agent"
+    "ai-agent",
+    "permissions"
   ],
   "engines": {
     "node": ">=18"
@@ -43,7 +43,9 @@
     "access": "public"
   },
   "openclaw": {
-    "extensions": ["./bin/cli.js"],
+    "extensions": [
+      "./bin/cli.js"
+    ],
     "compat": {
       "pluginApi": ">=2026.3.24-beta.2"
     },

@@ -1,4 +1,4 @@
-title = "docker-mailbox secret scanning"
+title = "mailgrant secret scanning"
 
 [extend]
 useDefault = true

@@ -1,7 +1,7 @@
 PORT ?= 8000
 CONFIG ?= $(PWD)/config.yaml
 
-DEV_IMAGE := psyb0t/mailboxd-dev:latest
+DEV_IMAGE := mailgrant-dev:latest
 
 PYPROJECT := pyproject.toml
 BUMP_HOST := bash scripts/bump_exclude_newer.sh $(PYPROJECT)
@@ -97,11 +97,11 @@ run: dev-image ## Run HTTP server (mounts CONFIG=path/to/config.yaml)
 	docker run --rm -it \
 		-u $(UID):$(GID) -e HOME=/tmp \
 		-v $(PWD):/work -w /work \
-		-v $(CONFIG):/etc/mailboxd/config.yaml:ro \
-		-e MAILBOXD_CONFIG=/etc/mailboxd/config.yaml \
+		-v $(CONFIG):/etc/mailgrant/config.yaml:ro \
+		-e MAILGRANT_CONFIG=/etc/mailgrant/config.yaml \
 		-p $(PORT):8000 \
 		$(DEV_IMAGE) \
-		uvicorn --factory mailboxd.server:create_app --host 0.0.0.0 --port 8000
+		uvicorn --factory mailgrant.server:create_app --host 0.0.0.0 --port 8000
 
 test: dev-image ## Run ALL tests (unit + docker-in-docker integration)
 	$(DEV_RUN_DIND) pytest --override-ini="addopts=-v --tb=short"

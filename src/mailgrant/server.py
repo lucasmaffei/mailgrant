@@ -12,9 +12,14 @@ URL shape:
   GET    /mailboxes/{name}/messages?folder=&limit=&search=
   GET    /mailboxes/{name}/search?from=&subject=&...  structured single-mailbox
   GET    /mailboxes/{name}/messages/{uid}?folder=
-  DELETE /mailboxes/{name}/messages/{uid}?folder=
+  DELETE /mailboxes/{name}/messages/{uid}?folder=&permanent=
   POST   /mailboxes/{name}/messages/{uid}/seen        body: {"seen": bool}
   POST   /mailboxes/{name}/send                       (SMTP)
+  GET    /whoami                                      the caller's agent, scopes, mailboxes
+
+Every route answers only for the mailboxes and scopes granted to the bearer
+token (see grants.py). A mailbox outside the grant is a 404, a missing scope
+a 403.
 """
 
 from __future__ import annotations
@@ -23,13 +28,16 @@ import contextlib
 import logging
 from typing import Any, AsyncIterator
 
-from fastapi import Body, FastAPI, HTTPException, Path, Query
+from fastapi import Body, FastAPI, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 from starlette.routing import Mount
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from . import __version__
+from . import __version__, audit
 from .config import Config, ConfigError, MailboxConfig, load_config
+from .grants import Forbidden, NotFound, Principal, authenticate, check_sender
+from .grants import resolve as grant_resolve
+from .grants import select_imap
 from .imap_client import ImapError
 from .imap_client import delete_message as imap_delete
 from .imap_client import fetch_message as imap_fetch
@@ -50,7 +58,7 @@ from .schemas import (
 from .smtp_client import SmtpError
 from .smtp_client import send as smtp_send
 
-log = logging.getLogger("mailboxd")
+log = logging.getLogger("mailgrant")
 
 
 def _load_or_die() -> Config:
@@ -59,13 +67,6 @@ def _load_or_die() -> Config:
     except ConfigError as e:
         log.error("config load failed: %s", e)
         raise
-
-
-def _resolve(cfg: Config, name: str) -> MailboxConfig:
-    m = cfg.get(name)
-    if m is None:
-        raise HTTPException(status_code=404, detail=f"unknown mailbox: {name!r}")
-    return m
 
 
 def _need(mb: MailboxConfig, proto: str) -> None:
@@ -83,22 +84,15 @@ _MCP_RAW_PATH = _MCP_PATH.encode("ascii")
 _MCP_RAW_PATH_WITH_TRAILING_SLASH = _MCP_PATH_WITH_TRAILING_SLASH.encode("ascii")
 
 
-def _bearer_ok(cfg: Config, scope: Scope) -> bool:
-    """Constant-time bearer check. Empty token lists deny all protected requests."""
-    if not cfg.auth.tokens:
-        return False
-    import hmac
-
+def _principal_from_scope(cfg: Config, scope: Scope) -> Principal | None:
+    """Resolve the bearer token to its principal. No tokens configured denies everything."""
     for k, v in scope.get("headers", []):
         if k == b"authorization":
             auth = v.decode("latin-1")
             if not auth.startswith("Bearer "):
-                return False
-            presented = auth[7:].strip()
-            if not presented:
-                return False
-            return any(hmac.compare_digest(t, presented) for t in cfg.auth.tokens)
-    return False
+                return None
+            return authenticate(cfg, auth[7:].strip())
+    return None
 
 
 async def _send_401(send: Send) -> None:
@@ -155,9 +149,13 @@ class _BearerASGI:
         if path in _AUTH_EXEMPT_PATHS:
             await self._app(scope, receive, send)
             return
-        if not _bearer_ok(self._cfg, scope):
+        principal = _principal_from_scope(self._cfg, scope)
+        if principal is None:
             await _send_401(send)
             return
+        # Starlette's Request.state reads scope["state"]; the MCP transport
+        # gets the same Request, so both layers see who is calling.
+        scope.setdefault("state", {})["principal"] = principal
         await self._app(scope, receive, send)
 
 
@@ -167,6 +165,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         level=getattr(logging, cfg.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    audit.configure(cfg.audit_log)
 
     mcp_manager = build_session_manager(cfg)
 
@@ -176,9 +175,9 @@ def create_app(config: Config | None = None) -> FastAPI:
             yield
 
     app = FastAPI(
-        title="mailboxd",
+        title="mailgrant",
         version=__version__,
-        description="Multi-mailbox IMAP/SMTP control plane.",
+        description="One email gateway for many AI agents, each with its own mailboxes and scopes.",
         lifespan=_lifespan,
     )
 
@@ -191,8 +190,41 @@ def create_app(config: Config | None = None) -> FastAPI:
     def health() -> dict[str, Any]:
         return {"ok": True, "version": __version__}
 
+    def _who(request: Request) -> Principal:
+        principal = getattr(request.state, "principal", None)
+        if principal is None:  # the middleware guarantees it; belt and braces
+            raise HTTPException(status_code=401, detail="missing or invalid Bearer token")
+        return principal
+
+    def _guard(
+        request: Request, name: str, scope: str, action: str, **fields: Any
+    ) -> MailboxConfig:
+        """Resolve the mailbox and check the scope, recording the decision either way."""
+        who = _who(request)
+        try:
+            mb = grant_resolve(cfg, who, name)
+            who.require(scope)
+        except NotFound as e:
+            audit.record(who.name, action, "denied", mailbox=name, reason="not_found", **fields)
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Forbidden as e:
+            audit.record(who.name, action, "denied", mailbox=name, reason="scope", **fields)
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        return mb
+
+    @app.get("/whoami")
+    def whoami(request: Request) -> dict[str, Any]:
+        who = _who(request)
+        return {
+            "agent": who.name,
+            "scopes": sorted(who.scopes),
+            "mailboxes": [m.name for m in who.visible(cfg)],
+            "all_mailboxes": who.mailboxes is None,
+        }
+
     @app.get("/mailboxes", response_model=MailboxList)
-    def list_mailboxes() -> MailboxList:
+    def list_mailboxes(request: Request) -> MailboxList:
+        who = _who(request)
         return MailboxList(
             mailboxes=[
                 MailboxSummary(
@@ -201,31 +233,15 @@ def create_app(config: Config | None = None) -> FastAPI:
                     imap=m.imap is not None,
                     smtp=m.smtp is not None,
                 )
-                for m in cfg.mailboxes
+                for m in who.visible(cfg)
             ]
         )
 
     # ── Unified inbox (default view) ────────────────────────────────────────
 
-    def _select_mailboxes(filter_csv: str | None) -> list[MailboxConfig]:
-        if not filter_csv:
-            return [m for m in cfg.mailboxes if m.imap is not None]
-        wanted = {s.strip() for s in filter_csv.split(",") if s.strip()}
-        out: list[MailboxConfig] = []
-        for m in cfg.mailboxes:
-            if m.imap is None:
-                continue
-            if m.name in wanted or (m.imap.username in wanted):
-                out.append(m)
-        if not out:
-            raise HTTPException(
-                status_code=404,
-                detail=f"no IMAP-enabled mailboxes matched filter: {filter_csv!r}",
-            )
-        return out
-
     @app.get("/inbox")
     def inbox(
+        request: Request,
         mailbox: str | None = Query(None, description="CSV of mailbox names or addresses"),
         folder: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -243,7 +259,16 @@ def create_app(config: Config | None = None) -> FastAPI:
         larger_than: int | None = Query(None, ge=0),
         smaller_than: int | None = Query(None, ge=0),
     ) -> dict[str, Any]:
-        targets = _select_mailboxes(mailbox)
+        who = _who(request)
+        try:
+            who.require("read")
+            targets = select_imap(cfg, who, mailbox)
+        except Forbidden as e:
+            audit.record(who.name, "inbox", "denied", reason="scope")
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NotFound as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        audit.record(who.name, "inbox", mailboxes=[m.name for m in targets])
         return imap_unified_search(
             targets,
             folder=folder,
@@ -266,8 +291,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     # ── IMAP ────────────────────────────────────────────────────────────────
 
     @app.get("/mailboxes/{name}/folders", response_model=FoldersResponse)
-    def folders(name: str = Path(...)) -> FoldersResponse:
-        mb = _resolve(cfg, name)
+    def folders(request: Request, name: str = Path(...)) -> FoldersResponse:
+        mb = _guard(request, name, "read", "list_folders")
         _need(mb, "imap")
         try:
             return FoldersResponse(folders=imap_list_folders(mb.imap))  # type: ignore[arg-type]
@@ -276,12 +301,13 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/mailboxes/{name}/messages")
     def list_msgs(
+        request: Request,
         name: str = Path(...),
         folder: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
         search: str = Query("ALL"),
     ) -> dict[str, Any]:
-        mb = _resolve(cfg, name)
+        mb = _guard(request, name, "read", "list_messages", folder=folder)
         _need(mb, "imap")
         try:
             msgs = imap_list_messages(
@@ -296,6 +322,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/mailboxes/{name}/search")
     def search_msgs(
+        request: Request,
         name: str = Path(...),
         folder: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
@@ -313,7 +340,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         larger_than: int | None = Query(None, ge=0),
         smaller_than: int | None = Query(None, ge=0),
     ) -> dict[str, Any]:
-        mb = _resolve(cfg, name)
+        mb = _guard(request, name, "read", "search", folder=folder)
         _need(mb, "imap")
         try:
             msgs = imap_search_messages(
@@ -340,6 +367,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/mailboxes/{name}/messages/{uid}")
     def get_msg(
+        request: Request,
         name: str = Path(...),
         uid: str = Path(...),
         folder: str | None = Query(None),
@@ -347,39 +375,57 @@ def create_app(config: Config | None = None) -> FastAPI:
             False, description="Add `body_reader`: readable text/markdown from HTML"
         ),
     ) -> dict[str, Any]:
-        mb = _resolve(cfg, name)
+        mb = _guard(request, name, "read", "get_message", uid=uid, folder=folder)
         _need(mb, "imap")
+        audit.record(_who(request).name, "get_message", mailbox=mb.name, uid=uid, folder=folder)
         try:
             return imap_fetch(mb.imap, uid, folder=folder, reader=reader)  # type: ignore[arg-type]
         except ImapError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
 
-    @app.delete("/mailboxes/{name}/messages/{uid}", response_model=GenericOK)
+    @app.delete("/mailboxes/{name}/messages/{uid}")
     def del_msg(
+        request: Request,
         name: str = Path(...),
         uid: str = Path(...),
         folder: str | None = Query(None),
-    ) -> GenericOK:
-        mb = _resolve(cfg, name)
+        permanent: bool = Query(False, description="Erase instead of moving to the trash"),
+    ) -> dict[str, Any]:
+        mb = _guard(request, name, "delete", "delete_message", uid=uid, folder=folder)
         _need(mb, "imap")
+        who = _who(request).name
         try:
-            imap_delete(mb.imap, uid, folder=folder)  # type: ignore[arg-type]
+            result = imap_delete(
+                mb.imap, uid, folder=folder, permanent=permanent  # type: ignore[arg-type]
+            )
         except ImapError as e:
+            audit.record(who, "delete_message", "error", mailbox=mb.name, uid=uid, error=str(e))
             raise HTTPException(status_code=502, detail=str(e)) from e
-        return GenericOK()
+        audit.record(
+            who,
+            "delete_message",
+            mailbox=mb.name,
+            uid=uid,
+            folder=folder,
+            moved_to=result.get("moved_to"),
+            erased=result.get("erased"),
+        )
+        return result
 
     class _SeenBody(BaseModel):
         seen: bool = True
 
     @app.post("/mailboxes/{name}/messages/{uid}/seen", response_model=GenericOK)
     def set_seen(
+        request: Request,
         name: str = Path(...),
         uid: str = Path(...),
         folder: str | None = Query(None),
         body: _SeenBody = Body(default_factory=_SeenBody),
     ) -> GenericOK:
-        mb = _resolve(cfg, name)
+        mb = _guard(request, name, "mark", "mark_seen", uid=uid, seen=body.seen)
         _need(mb, "imap")
+        audit.record(_who(request).name, "mark_seen", mailbox=mb.name, uid=uid, seen=body.seen)
         try:
             imap_mark_seen(mb.imap, uid, folder=folder, seen=body.seen)  # type: ignore[arg-type]
         except ImapError as e:
@@ -389,11 +435,25 @@ def create_app(config: Config | None = None) -> FastAPI:
     # ── SMTP ────────────────────────────────────────────────────────────────
 
     @app.post("/mailboxes/{name}/send")
-    def send(name: str = Path(...), req: SendRequest = Body(...)) -> dict[str, Any]:
-        mb = _resolve(cfg, name)
+    def send(
+        request: Request, name: str = Path(...), req: SendRequest = Body(...)
+    ) -> dict[str, Any]:
+        mb = _guard(request, name, "send", "send")
         _need(mb, "smtp")
+        who = _who(request).name
+        rcpts = [str(x) for x in [*req.to, *(req.cc or []), *(req.bcc or [])]]
         try:
-            return smtp_send(
+            check_sender(mb.smtp, req.from_address)  # type: ignore[arg-type]
+        except Forbidden as e:
+            audit.record(who, "send", "denied", mailbox=mb.name, reason="from_address")
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        copy_to = (
+            (mb.imap, mb.smtp.save_copy_to)  # type: ignore[union-attr]
+            if mb.imap is not None and mb.smtp and mb.smtp.save_copy_to
+            else None
+        )
+        try:
+            result = smtp_send(
                 mb.smtp,  # type: ignore[arg-type]
                 to=[str(x) for x in req.to],
                 subject=req.subject,
@@ -403,8 +463,14 @@ def create_app(config: Config | None = None) -> FastAPI:
                 bcc=[str(x) for x in (req.bcc or [])],
                 from_address=req.from_address,
                 reply_to=str(req.reply_to) if req.reply_to else None,
+                in_reply_to=req.in_reply_to,
+                references=req.references,
+                copy_to=copy_to,
             )
         except SmtpError as e:
+            audit.record(who, "send", "error", mailbox=mb.name, to=rcpts, error=str(e))
             raise HTTPException(status_code=502, detail=str(e)) from e
+        audit.record(who, "send", mailbox=mb.name, to=rcpts, message_id=result.get("message_id"))
+        return result
 
     return app

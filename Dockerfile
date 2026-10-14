@@ -25,8 +25,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # -----------------------------------------------------------------------------
 FROM python:3.12-slim-bookworm@sha256:d193c6f51a7dbd10395d6328de3a7edb0516fb0608ca138036576f574c3e07d2 AS runtime
 
-# MCP Registry ownership label
-LABEL io.modelcontextprotocol.server.name="io.github.psyb0t/mailbox"
+LABEL io.modelcontextprotocol.server.name="io.github.lucasmaffei/mailgrant" \
+      org.opencontainers.image.source="https://github.com/lucasmaffei/mailgrant" \
+      org.opencontainers.image.description="One email gateway for many AI agents, each with its own mailboxes and scopes" \
+      org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -34,23 +36,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=UTC \
     LOG_LEVEL=INFO \
     WORKERS=2 \
-    MAILBOXD_CONFIG=/etc/mailboxd/config.yaml
+    MAILGRANT_CONFIG=/etc/mailgrant/config.yaml
 
-RUN useradd --create-home --shell /bin/bash mailboxd \
-    && mkdir -p /etc/mailboxd \
-    && chown mailboxd:mailboxd /etc/mailboxd
+RUN useradd --create-home --shell /bin/bash mailgrant \
+    && mkdir -p /etc/mailgrant \
+    && chown mailgrant:mailgrant /etc/mailgrant
 
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
-COPY --chown=mailboxd:mailboxd src ./src
-COPY --chown=mailboxd:mailboxd pyproject.toml README.md ./
+COPY --chown=mailgrant:mailgrant src ./src
+COPY --chown=mailgrant:mailgrant pyproject.toml README.md ./
 
-USER mailboxd
+USER mailgrant
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)" || exit 1
 
-CMD ["sh", "-c", "uvicorn --factory mailboxd.server:create_app --host 0.0.0.0 --port 8000 --workers ${WORKERS}"]
+CMD ["sh", "-c", "uvicorn --factory mailgrant.server:create_app --host 0.0.0.0 --port 8000 --workers ${WORKERS}"]

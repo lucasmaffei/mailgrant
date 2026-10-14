@@ -4,8 +4,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 
 def _write_cfg(tmp_path: Path, tokens: list[str]) -> Path:

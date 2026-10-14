@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 TOKEN = "EXAMPLE-DO-NOT-USE-primary"
 SECOND_TOKEN = "EXAMPLE-DO-NOT-USE-secondary"
@@ -54,7 +54,7 @@ def _mail_boundary(monkeypatch, name):
     if name is None:
         return None
     operation = Mock(return_value={"uid": "1", "subject": "test", "ok": True})
-    monkeypatch.setattr(f"mailboxd.server.{name}", operation)
+    monkeypatch.setattr(f"mailgrant.server.{name}", operation)
     return operation
 
 

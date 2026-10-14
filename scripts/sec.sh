@@ -1,5 +1,5 @@
 #!/bin/bash
-# Security scan for docker-mailbox. Runs semgrep, bandit and pip-audit IN
+# Security scan for mailgrant. Runs semgrep, bandit and pip-audit IN
 # PARALLEL and merges their findings into sec.sarif for the GitHub Security tab.
 # It NEVER fails the build: findings are reported (the pipeline uploads the
 # SARIF), not gated, so a fresh advisory does not block a release. Triage the

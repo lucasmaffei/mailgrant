@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 TOKENS = ["EXAMPLE-DO-NOT-USE-primary", "EXAMPLE-DO-NOT-USE-secondary"]
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -75,7 +75,7 @@ def _result(response):
 
 def _boundary(monkeypatch, boundary):
     operation = Mock(return_value=MAIL_RESULT)
-    monkeypatch.setattr(f"mailboxd.mcp_server.{boundary}", operation)
+    monkeypatch.setattr(f"mailgrant.mcp_server.{boundary}", operation)
     return operation
 
 
@@ -97,12 +97,17 @@ def _assert_credentials(operation, boundary, mailbox):
             "bcc": [],
             "from_address": None,
             "reply_to": None,
+            "in_reply_to": None,
+            "references": None,
+            "copy_to": None,
         }
         return
     assert operation.call_args.args == (credentials, "42")
-    expected = {"folder": None}
+    expected: dict[str, object] = {"folder": None}
     if boundary == "imap_fetch":
         expected["reader"] = False
+    if boundary == "imap_delete":
+        expected["permanent"] = False
     assert operation.call_args.kwargs == expected
 
 
@@ -116,8 +121,8 @@ def test_each_token_can_operate_on_either_mailbox_by_name_or_address(
     config = load_config(str(security_config_factory({"tokens": TOKENS})))
     with TestClient(create_app(config)) as client:
         response = _call(client, {"Authorization": f"Bearer {token}"}, tool, selector, arguments)
-    expected = {"ok": True} if boundary == "imap_delete" else MAIL_RESULT
-    assert _result(response) == expected
+    # The mocked boundary's return value passes straight through for every tool.
+    assert _result(response) == MAIL_RESULT
     _assert_credentials(operation, boundary, mailbox)
 
 
@@ -132,8 +137,7 @@ def test_empty_auth_blocks_mcp_mail_operations(
     with TestClient(create_app(config)) as client:
         response = _call(client, {}, tool, selector, arguments)
     if response.status_code == HTTPStatus.OK:
-        expected = {"ok": True} if boundary == "imap_delete" else MAIL_RESULT
-        assert _result(response) == expected
+        assert _result(response) == MAIL_RESULT
         _assert_credentials(operation, boundary, mailbox)
     assert (
         response.status_code == HTTPStatus.UNAUTHORIZED

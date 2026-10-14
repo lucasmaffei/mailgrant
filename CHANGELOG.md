@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.0 — mailgrant
+
+First release as **mailgrant**, a fork of [docker-mailbox](https://github.com/psyb0t/docker-mailbox) v0.5.1.
+
+- **Per-agent grants.** `agents` in the config give each bearer token its own mailboxes (names, addresses or `*`) and scopes (`read`, `mark`, `delete`, `send`). Mailboxes outside a grant answer like unknown ones; missing scopes are 403 over REST and an error over MCP. `tools/list` only shows the tools a token may use. `auth.tokens` keeps working with full access.
+- Tokens can be stored as `token_sha256`; `mailgrant token` mints one with its hash. Duplicate tokens or hashes are rejected.
+- `whoami` (REST and MCP) tells an agent its own grant.
+- Audit log: one JSON line per mail operation on `mailgrant.audit`, allowed or denied. No subjects or bodies.
+- **Delete moves to the trash** and returns `moved_to`; `permanent=true` erases. Expunge is always `UID EXPUNGE` for that one message — a bare `EXPUNGE` removed every `\Deleted` message in the folder, including ones flagged by other mail clients. Servers without UIDPLUS refuse permanent deletes instead.
+- UIDs must be a single number. Ranges such as `1:*` were accepted and let one delete call wipe a folder.
+- `send` takes `in_reply_to` and `references` to answer inside a thread, refuses a `from_address` other than the mailbox's own or `smtp.allowed_from`, and `smtp.save_copy_to` files a copy of every sent message over IMAP.
+- Config: `${ENV_VAR}` references in any string, the whole file through `MAILGRANT_CONFIG_YAML`, unknown mailbox references in grants fail at startup. `mailgrant check` validates a config and prints the access matrix.
+- Folder names with spaces (`"Caixa de entrada"`) are parsed correctly; capabilities are re-read after login (Dovecot only advertises MOVE/UIDPLUS then).
+- Renamed package, CLI and env vars (`mailboxd` → `mailgrant`, `MAILBOXD_CONFIG` → `MAILGRANT_CONFIG`); Compose publishes on loopback by default; license is MIT.
+
+The entries below are docker-mailbox's history.
+
 ## v0.5.1
 
 - Clarify Docker's internal listener, the standalone CLI default, and host-side publishing. Documentation examples publish on host loopback and explain how to adjust the checked-in Compose file.

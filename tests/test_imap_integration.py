@@ -23,8 +23,8 @@ import imap_mock
 import pytest
 from fastapi.testclient import TestClient
 
-from mailboxd.config import ImapConfig, load_config
-from mailboxd.imap_client import (
+from mailgrant.config import ImapConfig, load_config
+from mailgrant.imap_client import (
     ImapError,
     delete_message,
     fetch_message,
@@ -181,7 +181,7 @@ mailboxes:
       password: "p"
       default_folder: INBOX
 """)
-    from mailboxd.server import create_app
+    from mailgrant.server import create_app
 
     return TestClient(
         create_app(load_config(str(cfg))),

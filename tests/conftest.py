@@ -65,7 +65,7 @@ def security_listener_factory(tmp_path: Path):
             arguments = [
                 sys.executable,
                 "-m",
-                "mailboxd",
+                "mailgrant",
                 "http",
                 "--port",
                 str(port),
@@ -125,6 +125,6 @@ def imap_connection(monkeypatch):
     connection.uid.return_value = ("OK", [b""])
     factory = Mock(return_value=connection)
     factory.error = imaplib.IMAP4.error
-    monkeypatch.setattr("mailboxd.imap_client.imaplib.IMAP4_SSL", factory)
-    monkeypatch.setattr("mailboxd.imap_client.imaplib.IMAP4", factory)
+    monkeypatch.setattr("mailgrant.imap_client.imaplib.IMAP4_SSL", factory)
+    monkeypatch.setattr("mailgrant.imap_client.imaplib.IMAP4", factory)
     return connection

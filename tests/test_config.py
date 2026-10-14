@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from mailboxd.config import ConfigError, load_config
+from mailgrant.config import ConfigError, load_config
 
 
 def _write(tmp_path: Path, body: str) -> str:

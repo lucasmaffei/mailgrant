@@ -1,21 +1,21 @@
 {
-  "name": "mailbox",
-  "version": "0.5.1",
-  "description": "Multi-mailbox IMAP/SMTP control plane exposed as a REST API and MCP server on a single port — read, search, send, mark-seen, and delete mail across multiple inboxes.",
+  "name": "mailgrant",
+  "version": "0.6.0",
+  "description": "One email gateway for many AI agents: each bearer token gets its own mailboxes and scopes (read, mark, delete, send) over MCP or REST.",
   "author": {
-    "name": "psyb0t",
-    "url": "https://github.com/psyb0t"
+    "name": "Lucas Maffei",
+    "url": "https://github.com/lucasmaffei"
   },
-  "homepage": "https://github.com/psyb0t/docker-mailbox",
-  "repository": "https://github.com/psyb0t/docker-mailbox",
-  "license": "WTFPL",
+  "homepage": "https://github.com/lucasmaffei/mailgrant",
+  "repository": "https://github.com/lucasmaffei/mailgrant",
+  "license": "MIT",
   "keywords": [
     "email",
     "imap",
     "smtp",
-    "mailbox",
     "mcp",
-    "rest-api",
+    "ai-agents",
+    "permissions",
     "self-hosted"
   ],
   "skills": "./skills/"

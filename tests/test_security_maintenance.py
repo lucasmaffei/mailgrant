@@ -12,9 +12,9 @@ import httpx
 import jwt
 import pytest
 
-from mailboxd.cli import main
-from mailboxd.config import ImapConfig, MailboxConfig, SmtpConfig
-from mailboxd.imap_client import ImapError, list_folders, unified_search
+from mailgrant.cli import main
+from mailgrant.config import ImapConfig, MailboxConfig, SmtpConfig
+from mailgrant.imap_client import ImapError, list_folders, unified_search
 
 SIGNING_KEY = "EXAMPLE-DO-NOT-USE-signing-key-with-sufficient-length"
 SYNTHETIC_PASSWORD = "EXAMPLE-DO-NOT-USE-password"

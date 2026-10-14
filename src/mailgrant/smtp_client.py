@@ -7,7 +7,10 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from typing import Iterable
 
-from .config import SmtpConfig
+from .config import ImapConfig, SmtpConfig
+from .imap_client import ImapError, append_message
+
+_HEADER_FORBIDDEN = ("\r", "\n")
 
 
 class SmtpError(Exception):
@@ -24,7 +27,19 @@ def send(
     bcc: Iterable[str] | None = None,
     from_address: str | None = None,
     reply_to: str | None = None,
-) -> dict[str, str]:
+    in_reply_to: str | None = None,
+    references: str | None = None,
+    copy_to: tuple[ImapConfig, str] | None = None,
+) -> dict[str, object]:
+    """Send one message. `in_reply_to` threads it under the original.
+
+    `copy_to` is (imap, folder): after a successful send the message is
+    appended there, so it shows up in Sent for everyone sharing the mailbox.
+    A failed copy is reported, not raised — the mail has already gone out.
+    """
+    for value, field in ((in_reply_to, "in_reply_to"), (references, "references")):
+        if value and any(ch in value for ch in _HEADER_FORBIDDEN):
+            raise SmtpError(f"invalid {field}: line breaks are not allowed")
     to_list = list(to)
     if not to_list:
         raise SmtpError("`to` must contain at least one address")
@@ -50,6 +65,13 @@ def send(
         msg["Cc"] = ", ".join(cc)
     if reply_to:
         msg["Reply-To"] = reply_to
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        # Clients thread on References; seed it with the parent when the caller
+        # doesn't pass the full chain.
+        msg["References"] = references or in_reply_to
+    elif references:
+        msg["References"] = references
 
     if body_text is not None:
         msg.set_content(body_text)
@@ -77,9 +99,21 @@ def send(
     except (smtplib.SMTPException, OSError) as e:
         raise SmtpError(f"send failed: {e}") from e
 
-    return {
+    result: dict[str, object] = {
         "from": str(msg["From"]),
         "to": str(msg["To"]),
         "subject": subject,
         "message_id": msg.get("Message-ID", ""),
     }
+    if copy_to is not None:
+        imap, folder = copy_to
+        try:
+            # Bcc never travels in the headers, but the sender's copy should
+            # remember it, as any mail client's Sent folder does.
+            if bcc:
+                msg["Bcc"] = ", ".join(bcc)
+            append_message(imap, folder, msg.as_bytes())
+            result["copy_saved_to"] = folder
+        except (ImapError, OSError) as e:
+            result["copy_error"] = str(e)
+    return result

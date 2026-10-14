@@ -666,8 +666,8 @@ wheels = [
 ]
 
 [[package]]
-name = "mailboxd"
-version = "0.5.1"
+name = "mailgrant"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

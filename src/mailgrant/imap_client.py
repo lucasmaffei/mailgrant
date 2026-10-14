@@ -12,6 +12,7 @@ import email
 import imaplib
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from email.header import decode_header, make_header
@@ -57,10 +58,13 @@ class ImapError(Exception):
 # reaches imaplib.
 _FORBIDDEN_CHARS = ("\r", "\n", "\x00")
 
-# A UID (or sequence-set) is only ever digits and the range punctuation
-# `,` `:` `*`. Anything else cannot be a valid UID and is refused outright,
-# which also makes UID values injection-proof by construction.
-_UID_RE = re.compile(r"^[0-9][0-9,:*]*$")
+# Every operation here targets exactly one message, so a UID is digits only.
+# Sets and ranges (`1:*`, `3,4`) are refused: with them a single delete call
+# would wipe a whole folder. Digits-only is also injection-proof by construction.
+_UID_RE = re.compile(r"^[1-9][0-9]*$")
+
+# LIST response: (\HasNoChildren \Trash) "/" "Deleted Items"
+_LIST_RE = re.compile(r'^\((?P<flags>[^)]*)\) (?P<delim>"(?:[^"\\]|\\.)*"|NIL) (?P<name>.+)$')
 
 
 def _reject_control_chars(value: str, field: str) -> None:
@@ -124,23 +128,84 @@ def _select(conn: imaplib.IMAP4, folder: str, readonly: bool = False) -> None:
         raise ImapError(f"could not select folder {folder!r}")
 
 
+def _parse_list(data: list[Any] | None) -> list[tuple[str, set[str]]]:
+    """(name, flags) per LIST line. Names may contain spaces ("Caixa de entrada")."""
+    out: list[tuple[str, set[str]]] = []
+    for raw in data or []:
+        if not raw:
+            continue
+        line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+        m = _LIST_RE.match(line.strip())
+        if not m:
+            continue
+        name = m.group("name").strip()
+        if len(name) >= 2 and name[0] == '"' and name[-1] == '"':
+            name = name[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        if name:
+            out.append((name, {f.lower() for f in m.group("flags").split()}))
+    return out
+
+
+def _list(conn: imaplib.IMAP4) -> list[tuple[str, set[str]]]:
+    typ, data = conn.list()
+    if typ != "OK":
+        raise ImapError("LIST failed")
+    return _parse_list(data)
+
+
 def list_folders(cfg: ImapConfig) -> list[str]:
     with _connect(cfg) as conn:
-        typ, data = conn.list()
-        if typ != "OK":
-            raise ImapError("LIST failed")
-        out: list[str] = []
-        for raw in data or []:
-            if not raw:
-                continue
-            line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
-            # IMAP LIST response: (\\HasNoChildren) "/" "INBOX"
-            parts = line.rsplit(" ", 1)
-            if len(parts) == 2:
-                folder = parts[1].strip().strip('"')
-                if folder:
-                    out.append(folder)
-        return out
+        return [name for name, _ in _list(conn)]
+
+
+def _quote(folder: str) -> str:
+    _reject_control_chars(folder, "folder")
+    return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _find_trash(conn: imaplib.IMAP4, cfg: ImapConfig) -> str | None:
+    """The configured trash folder, else the one flagged \\Trash, else one named Trash."""
+    folders = _list(conn)
+    names = {name for name, _ in folders}
+    if cfg.trash_folder:
+        return cfg.trash_folder if cfg.trash_folder in names else None
+    for name, flags in folders:
+        if "\\trash" in flags:
+            return name
+    for candidate in ("Trash", "INBOX.Trash", "Deleted Items", "Lixeira"):
+        if candidate in names:
+            return candidate
+    return None
+
+
+def _has_capability(conn: imaplib.IMAP4, cap: str) -> bool:
+    # imaplib keeps the pre-login CAPABILITY list, and servers such as Dovecot
+    # only advertise MOVE/UIDPLUS after authentication — so ask again.
+    caps: set[str] | None = getattr(conn, "_mailgrant_caps", None)
+    if caps is None:
+        typ, data = conn.capability()
+        caps = set()
+        if typ == "OK":
+            for raw in data or []:
+                text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else str(raw)
+                caps.update(c.upper() for c in text.split())
+        setattr(conn, "_mailgrant_caps", caps)
+    return cap.upper() in caps
+
+
+def _expunge_uid(conn: imaplib.IMAP4, uid: str) -> None:
+    """Remove exactly one \\Deleted message.
+
+    A bare EXPUNGE would also remove every other message flagged \\Deleted in
+    the folder — including ones a human marked in their own mail client.
+    """
+    if not _has_capability(conn, "UIDPLUS"):
+        raise ImapError(
+            "server lacks UIDPLUS; refusing a bare EXPUNGE that could remove other messages"
+        )
+    typ, _ = conn.uid("EXPUNGE", uid)
+    if typ != "OK":
+        raise ImapError(f"UID EXPUNGE failed for UID {uid}")
 
 
 def build_search_criteria(
@@ -421,16 +486,50 @@ def _payload_str(part: Message) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
-def delete_message(cfg: ImapConfig, uid: str, folder: str | None = None) -> None:
+def delete_message(
+    cfg: ImapConfig, uid: str, folder: str | None = None, permanent: bool = False
+) -> dict[str, Any]:
+    """Move a message to the trash folder; erase it only when `permanent`.
+
+    Deleting from the trash itself, or from a server with no trash folder,
+    needs `permanent=True` — nothing is ever erased by surprise.
+    """
     folder = folder or cfg.default_folder
     _validate_uid(uid)
     _reject_control_chars(folder, "folder")
     with _connect(cfg) as conn:
+        trash = None if permanent else _find_trash(conn, cfg)
+        if not permanent and (trash is None or trash == folder):
+            raise ImapError(
+                "no trash folder to move the message to (or it is already there); "
+                "pass permanent=true to erase it"
+            )
         _select(conn, folder, readonly=False)
+        if trash is not None:
+            if _has_capability(conn, "MOVE"):
+                typ, _ = conn.uid("MOVE", uid, _quote(trash))
+                if typ != "OK":
+                    raise ImapError(f"UID MOVE to {trash!r} failed for UID {uid}")
+                return {"ok": True, "moved_to": trash}
+            typ, _ = conn.uid("COPY", uid, _quote(trash))
+            if typ != "OK":
+                raise ImapError(f"UID COPY to {trash!r} failed for UID {uid}")
         typ, _ = conn.uid("STORE", uid, "+FLAGS", r"(\Deleted)")
         if typ != "OK":
             raise ImapError(f"STORE \\Deleted failed for UID {uid}")
-        conn.expunge()
+        _expunge_uid(conn, uid)
+        return {"ok": True, "moved_to": trash} if trash else {"ok": True, "erased": True}
+
+
+def append_message(cfg: ImapConfig, folder: str, raw: bytes) -> None:
+    """Store a copy of an outgoing message (already read: flagged \\Seen)."""
+    with _connect(cfg) as conn:
+        # typeshed declares append() as returning str; it returns (typ, data).
+        response: Any = conn.append(
+            _quote(folder), r"(\Seen)", imaplib.Time2Internaldate(time.time()), raw
+        )
+        if response[0] != "OK":
+            raise ImapError(f"APPEND to {folder!r} failed")
 
 
 def unified_search(

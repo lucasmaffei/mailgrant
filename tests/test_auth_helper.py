@@ -6,8 +6,8 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from mailboxd.auth import check_bearer
-from mailboxd.config import AuthConfig
+from mailgrant.auth import check_bearer
+from mailgrant.config import AuthConfig
 
 TOKEN = "EXAMPLE-DO-NOT-USE"
 

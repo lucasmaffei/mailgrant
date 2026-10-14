@@ -2,9 +2,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from mailboxd import __version__
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant import __version__
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 
 def _client(tmp_path: Path) -> TestClient:

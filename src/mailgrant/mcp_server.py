@@ -6,6 +6,10 @@ the tool catalog constant-sized regardless of how many mailboxes are
 configured — agents discover available mailboxes via the `mailboxes` tool
 and pass the chosen one as a parameter.
 
+Each tool needs one scope (`read`, `mark`, `delete` or `send`). `tools/list`
+only shows the tools the calling agent may use, and every call is checked
+against its grant again — the list is a courtesy, the check is the rule.
+
 This module exposes a `StreamableHTTPSessionManager` and a lifespan helper
 that the FastAPI app mounts under `/mcp`. There is no stdio transport.
 """
@@ -20,8 +24,11 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
-from . import __version__
+from . import __version__, audit
 from .config import Config, MailboxConfig
+from .grants import Forbidden, NotFound, Principal, check_sender
+from .grants import resolve as grant_resolve
+from .grants import select_imap
 from .imap_client import ImapError
 from .imap_client import delete_message as imap_delete
 from .imap_client import fetch_message as imap_fetch
@@ -81,20 +88,6 @@ def _search_kwargs(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _resolve_mailbox(cfg: Config, ident: str) -> MailboxConfig:
-    """Look up a mailbox by name or by IMAP/SMTP username (address)."""
-    if not ident:
-        raise ValueError("`mailbox` is required")
-    for m in cfg.mailboxes:
-        if m.name == ident:
-            return m
-        if m.imap is not None and m.imap.username == ident:
-            return m
-        if m.smtp is not None and m.smtp.username == ident:
-            return m
-    raise ValueError(f"unknown mailbox: {ident!r}")
-
-
 def _require_imap(mb: MailboxConfig) -> Any:
     if mb.imap is None:
         raise ValueError(f"mailbox {mb.name!r} has no IMAP configured")
@@ -107,18 +100,67 @@ def _require_smtp(mb: MailboxConfig) -> Any:
     return mb.smtp
 
 
+Handler = Callable[[dict[str, Any], Principal], Any]
+
+# The scope each tool needs. Discovery tools need `read` like the rest of the
+# read path; `whoami` needs nothing so any agent can learn its own grant.
+TOOL_SCOPES: dict[str, str | None] = {
+    "whoami": None,
+    "mailboxes": "read",
+    "inbox": "read",
+    "list_folders": "read",
+    "list_messages": "read",
+    "search": "read",
+    "get_message": "read",
+    "mark_seen": "mark",
+    "delete_message": "delete",
+    "send": "send",
+}
+
+
+def _mailbox(cfg: Config, who: Principal, args: dict[str, Any], tool: str) -> MailboxConfig:
+    """Resolve the `mailbox` argument within the caller's grant (audits denials)."""
+    ident = str(args.get("mailbox") or "")
+    try:
+        return grant_resolve(cfg, who, ident)
+    except NotFound:
+        audit.record(who.name, tool, "denied", mailbox=ident, reason="not_found")
+        raise
+
+
 def _build_tools(
     cfg: Config,
-) -> tuple[list[types.Tool], dict[str, Callable[[dict[str, Any]], Any]]]:
+) -> tuple[list[types.Tool], dict[str, Handler]]:
     tools: list[types.Tool] = []
-    handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
+    handlers: dict[str, Handler] = {}
+
+    tools.append(
+        types.Tool(
+            name="whoami",
+            description=(
+                "Show which agent this token belongs to, its scopes "
+                "(read / mark / delete / send) and the mailboxes it may use."
+            ),
+            inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+        )
+    )
+
+    def _whoami(_args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        return {
+            "agent": who.name,
+            "scopes": sorted(who.scopes),
+            "mailboxes": [m.name for m in who.visible(_c)],
+            "all_mailboxes": who.mailboxes is None,
+        }
+
+    handlers["whoami"] = _whoami
 
     # ── Discovery ────────────────────────────────────────────────────────
     tools.append(
         types.Tool(
             name="mailboxes",
             description=(
-                "List all configured mailboxes with their capabilities. "
+                "List the mailboxes this agent may use, with their capabilities. "
                 "Each entry has `name`, `description`, `address` (the IMAP/SMTP "
                 "username if set), and booleans `imap`/`smtp` indicating which "
                 "protocols are wired up. Pass `name` or `address` as the "
@@ -128,7 +170,7 @@ def _build_tools(
         )
     )
 
-    def _mailboxes(_args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
+    def _mailboxes(_args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
         return {
             "mailboxes": [
                 {
@@ -142,7 +184,7 @@ def _build_tools(
                     "imap": m.imap is not None,
                     "smtp": m.smtp is not None,
                 }
-                for m in _c.mailboxes
+                for m in who.visible(_c)
             ]
         }
 
@@ -166,7 +208,7 @@ def _build_tools(
 def _register_unified(
     cfg: Config,
     tools: list[types.Tool],
-    handlers: dict[str, Callable[[dict[str, Any]], Any]],
+    handlers: dict[str, Handler],
 ) -> None:
     schema_props: dict[str, Any] = {
         "mailbox": {
@@ -183,7 +225,7 @@ def _register_unified(
         types.Tool(
             name="inbox",
             description=(
-                "Unified inbox across all configured IMAP mailboxes. Returns a "
+                "Unified inbox across every IMAP mailbox this agent may use. Returns a "
                 "merged, newest-first feed. Use `mailbox` (CSV) to filter by "
                 "mailbox name or email address. Use `from`, `subject`, etc. to "
                 "filter content. Each result is tagged with its source `mailbox` "
@@ -197,17 +239,10 @@ def _register_unified(
         )
     )
 
-    def _inbox(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
+    def _inbox(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
         filter_csv = args.get("mailbox")
-        if filter_csv:
-            wanted = {s.strip() for s in str(filter_csv).split(",") if s.strip()}
-            targets = [
-                m
-                for m in _c.mailboxes
-                if m.imap is not None and (m.name in wanted or m.imap.username in wanted)
-            ]
-        else:
-            targets = [m for m in _c.mailboxes if m.imap is not None]
+        targets = select_imap(_c, who, str(filter_csv) if filter_csv else None)
+        audit.record(who.name, "inbox", mailboxes=[m.name for m in targets])
         return imap_unified_search(targets, **_search_kwargs(args))
 
     handlers["inbox"] = _inbox
@@ -216,7 +251,7 @@ def _register_unified(
 def _register_imap_tools(
     cfg: Config,
     tools: list[types.Tool],
-    handlers: dict[str, Callable[[dict[str, Any]], Any]],
+    handlers: dict[str, Handler],
 ) -> None:
     tools.append(
         types.Tool(
@@ -231,8 +266,8 @@ def _register_imap_tools(
         )
     )
 
-    def _list_folders(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
+    def _list_folders(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "list_folders")
         return {"folders": imap_list_folders(_require_imap(mb))}
 
     handlers["list_folders"] = _list_folders
@@ -262,8 +297,8 @@ def _register_imap_tools(
         )
     )
 
-    def _list_messages(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
+    def _list_messages(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "list_messages")
         return {
             "messages": imap_list_messages(
                 _require_imap(mb),
@@ -291,8 +326,8 @@ def _register_imap_tools(
         )
     )
 
-    def _search(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
+    def _search(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "search")
         return {"messages": imap_search_messages(_require_imap(mb), **_search_kwargs(args))}
 
     handlers["search"] = _search
@@ -325,8 +360,11 @@ def _register_imap_tools(
         )
     )
 
-    def _get_message(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
+    def _get_message(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "get_message")
+        audit.record(
+            who.name, "get_message", mailbox=mb.name, uid=args.get("uid"), folder=args.get("folder")
+        )
         return imap_fetch(
             _require_imap(mb),
             str(args["uid"]),
@@ -339,13 +377,17 @@ def _register_imap_tools(
     tools.append(
         types.Tool(
             name="delete_message",
-            description="Permanently delete a message (flag + expunge) in a mailbox.",
+            description=(
+                "Move a message to the mailbox's trash folder. Pass `permanent=true` "
+                "to erase it instead (required when it is already in the trash)."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "mailbox": _MAILBOX_ARG,
                     "uid": {"type": "string"},
                     "folder": {"type": "string"},
+                    "permanent": {"type": "boolean", "default": False},
                 },
                 "required": ["mailbox", "uid"],
                 "additionalProperties": False,
@@ -353,10 +395,23 @@ def _register_imap_tools(
         )
     )
 
-    def _del(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
-        imap_delete(_require_imap(mb), str(args["uid"]), folder=args.get("folder"))
-        return {"ok": True}
+    def _del(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "delete_message")
+        result = imap_delete(
+            _require_imap(mb),
+            str(args["uid"]),
+            folder=args.get("folder"),
+            permanent=bool(args.get("permanent", False)),
+        )
+        audit.record(
+            who.name,
+            "delete_message",
+            mailbox=mb.name,
+            uid=args.get("uid"),
+            moved_to=result.get("moved_to"),
+            erased=result.get("erased"),
+        )
+        return result
 
     handlers["delete_message"] = _del
 
@@ -378,8 +433,9 @@ def _register_imap_tools(
         )
     )
 
-    def _seen(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
+    def _seen(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "mark_seen")
+        audit.record(who.name, "mark_seen", mailbox=mb.name, uid=args.get("uid"))
         imap_mark_seen(
             _require_imap(mb),
             str(args["uid"]),
@@ -394,12 +450,15 @@ def _register_imap_tools(
 def _register_smtp_tools(
     cfg: Config,
     tools: list[types.Tool],
-    handlers: dict[str, Callable[[dict[str, Any]], Any]],
+    handlers: dict[str, Handler],
 ) -> None:
     tools.append(
         types.Tool(
             name="send",
-            description="Send an email from a mailbox via SMTP.",
+            description=(
+                "Send an email from a mailbox via SMTP. To answer a message, pass its "
+                "`message_id` as `in_reply_to` so the reply lands in the same thread."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -410,8 +469,16 @@ def _register_smtp_tools(
                     "body_html": {"type": "string"},
                     "cc": {"type": "array", "items": {"type": "string"}},
                     "bcc": {"type": "array", "items": {"type": "string"}},
-                    "from_address": {"type": "string"},
+                    "from_address": {
+                        "type": "string",
+                        "description": "Only the mailbox's own address or its smtp.allowed_from",
+                    },
                     "reply_to": {"type": "string"},
+                    "in_reply_to": {
+                        "type": "string",
+                        "description": "Message-ID being answered, e.g. <abc@example.com>",
+                    },
+                    "references": {"type": "string"},
                 },
                 "required": ["mailbox", "to", "subject"],
                 "additionalProperties": False,
@@ -419,19 +486,40 @@ def _register_smtp_tools(
         )
     )
 
-    def _send(args: dict[str, Any], _c: Config = cfg) -> dict[str, Any]:
-        mb = _resolve_mailbox(_c, str(args["mailbox"]))
-        return smtp_send(
-            _require_smtp(mb),
-            to=list(args["to"]),
-            subject=str(args["subject"]),
-            body_text=args.get("body_text"),
-            body_html=args.get("body_html"),
-            cc=list(args.get("cc") or []),
-            bcc=list(args.get("bcc") or []),
-            from_address=args.get("from_address"),
-            reply_to=args.get("reply_to"),
+    def _send(args: dict[str, Any], who: Principal, _c: Config = cfg) -> dict[str, Any]:
+        mb = _mailbox(_c, who, args, "send")
+        smtp = _require_smtp(mb)
+        rcpts = [*list(args["to"]), *list(args.get("cc") or []), *list(args.get("bcc") or [])]
+        try:
+            check_sender(smtp, args.get("from_address"))
+        except Forbidden:
+            audit.record(who.name, "send", "denied", mailbox=mb.name, reason="from_address")
+            raise
+        copy_to = (
+            (mb.imap, smtp.save_copy_to) if mb.imap is not None and smtp.save_copy_to else None
         )
+        try:
+            result = smtp_send(
+                smtp,
+                to=list(args["to"]),
+                subject=str(args["subject"]),
+                body_text=args.get("body_text"),
+                body_html=args.get("body_html"),
+                cc=list(args.get("cc") or []),
+                bcc=list(args.get("bcc") or []),
+                from_address=args.get("from_address"),
+                reply_to=args.get("reply_to"),
+                in_reply_to=args.get("in_reply_to"),
+                references=args.get("references"),
+                copy_to=copy_to,
+            )
+        except SmtpError as e:
+            audit.record(who.name, "send", "error", mailbox=mb.name, to=rcpts, error=str(e))
+            raise
+        audit.record(
+            who.name, "send", mailbox=mb.name, to=rcpts, message_id=result.get("message_id")
+        )
+        return result
 
     handlers["send"] = _send
 
@@ -440,20 +528,44 @@ def build_mcp_app(cfg: Config) -> Server:
     """Build the low-level MCP `Server` with all tools registered for `cfg`."""
     tools, handlers = _build_tools(cfg)
 
-    server: Server = Server("mailboxd", version=__version__)
+    server: Server = Server("mailgrant", version=__version__)
+
+    def _caller() -> Principal:
+        # The bearer middleware stored the principal on the HTTP request, and
+        # the streamable-HTTP transport hands that request to the server.
+        request = server.request_context.request
+        principal = getattr(getattr(request, "state", None), "principal", None)
+        if not isinstance(principal, Principal):
+            raise PermissionError("unauthenticated MCP request")
+        return principal
+
+    def _allowed(who: Principal, tool: str) -> bool:
+        scope = TOOL_SCOPES.get(tool)
+        return scope is None or who.has(scope)
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return tools
+        who = _caller()
+        return [t for t in tools if _allowed(who, t.name)]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+        who = _caller()
         fn = handlers.get(name)
         if fn is None:
             raise ValueError(f"unknown tool: {name}")
         try:
-            result = fn(arguments or {})
-        except (ImapError, SmtpError, ValueError) as e:
+            if not _allowed(who, name):
+                audit.record(
+                    who.name,
+                    name,
+                    "denied",
+                    reason="scope",
+                    mailbox=(arguments or {}).get("mailbox"),
+                )
+                raise Forbidden(f"agent {who.name!r} lacks the {TOOL_SCOPES[name]!r} scope")
+            result = fn(arguments or {}, who)
+        except (ImapError, SmtpError, ValueError, NotFound, Forbidden) as e:
             return [types.TextContent(type="text", text=json.dumps({"error": str(e)}))]
         return [types.TextContent(type="text", text=json.dumps(result, default=str))]
 

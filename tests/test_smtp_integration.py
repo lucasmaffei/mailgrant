@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 
 class _Sink:
@@ -148,7 +148,7 @@ def test_send_delivers_message(smtp_sink: Any, tmp_path: Path) -> None:
         "/mailboxes/sink/send",
         json={
             "to": ["dest@example.com"],
-            "subject": "hi from mailboxd",
+            "subject": "hi from mailgrant",
             "body_text": "body line",
         },
     )
@@ -156,7 +156,7 @@ def test_send_delivers_message(smtp_sink: Any, tmp_path: Path) -> None:
     assert len(sink.messages) == 1
     raw = sink.messages[0]
     msg = email.message_from_bytes(raw)
-    assert msg["Subject"] == "hi from mailboxd"
+    assert msg["Subject"] == "hi from mailgrant"
     assert "dest@example.com" in msg["To"]
     assert "sender@example.com" in msg["From"]
     mail_from, rcpts = sink.envelopes[0]

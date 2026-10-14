@@ -70,6 +70,9 @@ class SendRequest(BaseModel):
     bcc: list[str] | None = None
     from_address: str | None = None
     reply_to: str | None = None
+    # Message-ID of the message being answered; threads the reply under it.
+    in_reply_to: str | None = None
+    references: str | None = None
 
 
 class SendResponse(BaseModel):

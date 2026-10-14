@@ -7,8 +7,8 @@ from typing import Any
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from mailboxd.config import load_config
-from mailboxd.server import create_app
+from mailgrant.config import load_config
+from mailgrant.server import create_app
 
 _MCP_PATH = "/mcp"
 _MCP_PATH_WITH_TRAILING_SLASH = f"{_MCP_PATH}/"
@@ -80,7 +80,7 @@ def _initialize_request(client: TestClient, path: str) -> Response:
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "mailboxd-test", "version": "1"},
+                "clientInfo": {"name": "mailgrant-test", "version": "1"},
             },
         },
     )
@@ -112,7 +112,7 @@ def test_streamable_http_mcp_initializes_lists_tools_and_calls_mailboxes(
             {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "mailboxd-test", "version": "1"},
+                "clientInfo": {"name": "mailgrant-test", "version": "1"},
             },
         )
         tools = _mcp_request(client, 2, "tools/list", {})
@@ -124,7 +124,7 @@ def test_streamable_http_mcp_initializes_lists_tools_and_calls_mailboxes(
         )
 
     assert initialized["id"] == 1
-    assert initialized["result"]["serverInfo"]["name"] == "mailboxd"
+    assert initialized["result"]["serverInfo"]["name"] == "mailgrant"
     tool_names = {tool["name"] for tool in tools["result"]["tools"]}
     assert {"mailboxes", "inbox", "list_folders", "send"} <= tool_names
     content = mailbox_result["result"]["content"]

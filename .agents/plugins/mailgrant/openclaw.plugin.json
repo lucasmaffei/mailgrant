@@ -1,0 +1,44 @@
+{
+  "name": "mailgrant-mcp",
+  "id": "mailgrant-mcp",
+  "version": "0.0.0",
+  "type": "code-plugin",
+  "summary": "Connect an OpenClaw agent to a self-hosted mailgrant gateway over MCP, with only the mailboxes and scopes its token grants.",
+  "description": "A thin stdio<->HTTP bridge to a running mailgrant instance's MCP endpoint (/mcp). The agent sees only the tools its token's scopes allow: whoami, mailboxes, inbox, list_folders, list_messages, search, get_message (read); mark_seen (mark); delete_message (delete, moves to trash); send (send). mailgrant is self-hosted — see https://github.com/lucasmaffei/mailgrant.",
+  "extensions": [
+    "./bin/cli.js"
+  ],
+  "compat": {
+    "pluginApi": ">=2026.3.24-beta.2"
+  },
+  "build": {
+    "openclawVersion": "2026.3.24-beta.2"
+  },
+  "environment": {
+    "MAILGRANT_URL": {
+      "required": true,
+      "description": "Base URL of your mailgrant instance, e.g. https://mail-mcp.example.com (the bridge appends /mcp)."
+    },
+    "MAILGRANT_TOKEN": {
+      "required": true,
+      "description": "This agent's bearer token."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "url",
+      "token"
+    ],
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Base URL of your mailgrant instance (the bridge appends /mcp)."
+      },
+      "token": {
+        "type": "string",
+        "description": "This agent's bearer token."
+      }
+    }
+  }
+}

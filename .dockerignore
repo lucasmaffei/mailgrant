@@ -77,7 +77,7 @@ pyrightconfig.json
 .flake8
 .python-version
 
-# Example config — runtime config is mounted at /etc/mailboxd/config.yaml
+# Example config — runtime config is mounted at /etc/mailgrant/config.yaml
 config.example.yaml
 
 # Secrets / runtime config — must NEVER end up in the image

@@ -1,32 +1,32 @@
 {
-  "name": "mailbox",
-  "description": "Multi-mailbox IMAP/SMTP control plane exposed as a REST API and MCP server on a single port — read, search, send, mark-seen, and delete mail across multiple inboxes.",
+  "name": "mailgrant",
+  "description": "One email gateway for many AI agents: each bearer token gets its own mailboxes and scopes (read, mark, delete, send) over MCP or REST.",
   "author": {
-    "name": "psyb0t",
-    "url": "https://github.com/psyb0t"
+    "name": "Lucas Maffei",
+    "url": "https://github.com/lucasmaffei"
   },
-  "homepage": "https://github.com/psyb0t/docker-mailbox",
-  "license": "WTFPL",
+  "homepage": "https://github.com/lucasmaffei/mailgrant",
+  "license": "MIT",
   "keywords": [
     "email",
     "imap",
     "smtp",
-    "mailbox",
     "mcp",
-    "rest-api",
+    "ai-agents",
+    "permissions",
     "self-hosted"
   ],
   "userConfig": {
-    "mailbox_url": {
+    "mailgrant_url": {
       "type": "string",
-      "title": "mailboxd URL",
-      "description": "Base URL of your running mailboxd instance, e.g. http://localhost:8000 (sets MAILBOX_URL).",
+      "title": "mailgrant URL",
+      "description": "Base URL of your mailgrant instance, e.g. https://mail-mcp.example.com (sets MAILGRANT_URL).",
       "required": true
     },
-    "mailbox_token": {
+    "mailgrant_token": {
       "type": "string",
-      "title": "mailboxd bearer token",
-      "description": "Bearer token matching the server's auth.tokens (sets MAILBOX_TOKEN).",
+      "title": "mailgrant agent token",
+      "description": "This agent's bearer token (sets MAILGRANT_TOKEN).",
       "required": true,
       "sensitive": true
     }

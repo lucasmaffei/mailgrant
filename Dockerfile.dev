@@ -37,7 +37,7 @@ WORKDIR /work
 
 # Bake deps into /opt/venv. Copy only pyproject + uv.lock so the layer cache
 # invalidates only when those change. --no-install-project skips installing
-# mailboxd itself — the source lives on the bind-mount and is importable via
+# mailgrant itself — the source lives on the bind-mount and is importable via
 # PYTHONPATH=/work/src.
 COPY pyproject.toml uv.lock* README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
