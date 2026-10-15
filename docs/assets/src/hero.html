@@ -1,109 +1,25 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><link rel="stylesheet" href="tokens.css">
-<script>
-  const q = new URLSearchParams(location.search);
-  document.documentElement.dataset.theme = q.get('theme') || 'dark';
-  document.documentElement.lang = q.get('lang') || 'en';
-</script>
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="readme.css">
 <style>
-  body { width: 1280px; height: 460px; overflow: hidden; position: relative; }
-  .copy { position: absolute; left: 72px; top: 0; bottom: 0; width: 540px; display: flex; flex-direction: column; justify-content: center; }
-  .mark { display: flex; align-items: center; gap: 18px; }
-  .mark svg { width: 64px; height: 64px; flex: none; }
-  h1 { font-size: 92px; font-weight: 800; letter-spacing: -0.035em; line-height: 1; font-variation-settings: 'opsz' 96; }
-  p { margin-top: 26px; font-size: 26px; line-height: 1.32; color: var(--muted); max-width: 490px; font-variation-settings: 'opsz' 24; }
-  p strong { color: var(--text); font-weight: 600; }
-
-  .wall { position: absolute; right: 64px; top: 30px; display: grid; grid-template-columns: repeat(5, 108px); grid-auto-rows: 100px; gap: 12px; }
-  .box { position: relative; background: var(--door); border: 2px solid var(--door-edge); border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 10px 0 14px; }
-  .plate { font-family: 'Big Shoulders Display', sans-serif; font-weight: 800; font-size: 20px; letter-spacing: .04em; color: var(--brass); line-height: 1; }
-  .glass { width: 62px; height: 26px; border-radius: 3px; border: 2px solid var(--door-edge); background: repeating-linear-gradient(90deg, transparent 0 6px, color-mix(in srgb, var(--door-edge) 55%, transparent) 6px 8px); position: relative; overflow: hidden; }
-  .keyhole { width: 14px; height: 20px; position: relative; }
-  .keyhole::before { content: ''; position: absolute; left: 2px; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--recess); }
-  .keyhole::after { content: ''; position: absolute; left: 5px; top: 7px; width: 4px; height: 12px; background: var(--recess); border-radius: 0 0 2px 2px; }
-
-  /* A granted box: brass frame, mail showing through the window, key in the lock. */
-  .box.granted { border-color: var(--brass); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 22%, transparent); }
-  .box.granted .glass { border-color: var(--brass); background: var(--recess); }
-  .box.granted .glass::before { content: ''; position: absolute; left: 6px; right: 6px; top: 7px; bottom: -4px; background: var(--paper); border-radius: 2px; }
-  .box.granted .glass::after { content: ''; position: absolute; left: 6px; right: 6px; top: 7px; height: 14px; background: linear-gradient(160deg, transparent 48%, rgba(20,32,46,.25) 50%, transparent 52%), linear-gradient(20deg, transparent 48%, rgba(20,32,46,.25) 50%, transparent 52%); }
-  .box.granted .keyhole { visibility: hidden; }
-
-  .key { position: absolute; z-index: 4; }
-  svg.strings { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
-  .tag { position: absolute; z-index: 5; background: var(--paper); color: var(--ink-on-paper); border-radius: 5px 5px 16px 16px; padding: 17px 16px 9px; box-shadow: 0 3px 0 rgba(0,0,0,.22); transform-origin: 50% 0; white-space: nowrap; }
-  :root[data-theme="light"] .tag { box-shadow: 0 0 0 1.5px var(--door-edge), 0 3px 0 rgba(20,32,46,.08); }
-  .tag::before { content: ''; position: absolute; left: 50%; top: 6px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; border: 2px solid var(--brass); background: var(--lobby); }
-  .tag .who { font-size: 17px; font-weight: 600; line-height: 1.1; text-align: center; }
-  .tag .can { font-size: 12.5px; color: #5b6b7c; margin-top: 3px; text-align: center; }
-</style></head>
-<body>
-  <div class="copy">
-    <div class="mark">
-      <svg viewBox="0 0 64 64" aria-hidden="true">
-        <rect x="3" y="3" width="58" height="58" rx="10" fill="var(--door)" stroke="var(--door-edge)" stroke-width="3"/>
-        <circle cx="32" cy="27" r="9" fill="var(--brass)"/>
-        <rect x="28.5" y="31" width="7" height="18" rx="2" fill="var(--brass)"/>
-      </svg>
-      <h1>mailgrant</h1>
-    </div>
-    <p id="tagline"></p>
-  </div>
-  <div class="wall" id="wall"></div>
-
+body { width: 1280px; height: 600px; position: relative; overflow: hidden; }
+.copy { position: absolute; left: 80px; top: 0; bottom: 0; width: 560px; display: flex; flex-direction: column; justify-content: center; gap: 26px; }
+.copy .word { font-size: 86px; line-height: 1; }
+.copy p { font-size: 25px; line-height: 1.38; color: var(--muted); max-width: 520px; }
+.copy p b { color: var(--text); font-weight: 500; }
+.copy .mono { font-size: 14px; color: var(--faint); }
+.p1 { position: absolute; left: 700px; top: 52px; width: 290px; }
+.p2 { position: absolute; left: 930px; top: 104px; width: 290px; }
+</style></head><body>
+<div class="copy">
+  <div class="word">mailgrant<i>.</i></div>
+  <p id="tag"></p>
+  <span class="mono" id="sub"></span>
+</div>
+<div class="phone p1"><img src="shots/02-entrada.png" alt=""></div>
+<div class="phone p2"><img src="shots/05-agentes.png" alt=""></div>
 <script>
-  const T = {
-    en: {
-      tagline: 'One email gateway for many AI agents. <strong>Each one holds keys to its own mailboxes</strong>, and only to those.',
-      agents: [['support-bot', 'read, mark, send'], ['finance-bot', 'read']],
-    },
-    'pt-BR': {
-      tagline: 'Um gateway de e-mail para vários agentes de IA. <strong>Cada um tem a chave das suas caixas</strong>, e só delas.',
-      agents: [['atendimento', 'read, mark, send'], ['financeiro', 'read']],
-    },
-  }[document.documentElement.lang];
-  document.getElementById('tagline').innerHTML = T.tagline;
-
-  // Bottom-row boxes get the keys, so the tags hang in free space under the wall.
-  const granted = { 11: 0, 13: 1 };
-  const wall = document.getElementById('wall');
-  for (let i = 0; i < 15; i++) {
-    const b = document.createElement('div');
-    b.className = 'box' + (i in granted ? ' granted' : '');
-    b.innerHTML = `<span class="plate">${101 + i}</span><span class="glass"></span><span class="keyhole"></span>`;
-    wall.appendChild(b);
-  }
-
-  const NS = 'http://www.w3.org/2000/svg';
-  const strings = document.createElementNS(NS, 'svg');
-  strings.setAttribute('class', 'strings'); strings.setAttribute('width', 1280); strings.setAttribute('height', 460);
-  document.body.appendChild(strings);
-  const keySvg = `<svg width="22" height="50" viewBox="0 0 22 50"><rect x="8.5" y="0" width="5" height="30" rx="2" fill="var(--brass)"/><rect x="13" y="5" width="6" height="4" fill="var(--brass)"/><rect x="13" y="12" width="4" height="4" fill="var(--brass)"/><circle cx="11" cy="38" r="8" fill="none" stroke="var(--brass)" stroke-width="4.5"/></svg>`;
-  const tilts = [-3, 4];
-  for (const [i, a] of Object.entries(granted)) {
-    const box = wall.children[i];
-    const r = box.getBoundingClientRect();
-    const hole = box.querySelector('.keyhole').getBoundingClientRect();
-    const cx = hole.left + hole.width / 2;
-    const key = document.createElement('div');
-    key.className = 'key';
-    key.style.left = (cx - 11) + 'px'; key.style.top = (hole.top + 2) + 'px';
-    key.innerHTML = keySvg;
-    document.body.appendChild(key);
-
-    const bowY = hole.top + 2 + 46, tagTop = r.bottom + 26;
-    const line = document.createElementNS(NS, 'path');
-    line.setAttribute('d', `M ${cx} ${bowY} L ${cx} ${tagTop + 10}`);
-    line.setAttribute('stroke', 'var(--brass)'); line.setAttribute('stroke-width', '2');
-    strings.appendChild(line);
-
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.innerHTML = `<div class="who">${T.agents[a][0]}</div><div class="can">${T.agents[a][1]}</div>`;
-    document.body.appendChild(tag);
-    tag.style.left = (cx - tag.offsetWidth / 2) + 'px';
-    tag.style.top = tagTop + 'px';
-    tag.style.transform = `rotate(${tilts[a]}deg)`;
-  }
-</script>
-</body></html>
+const pt = new URLSearchParams(location.search).get('lang') === 'pt-BR';
+document.getElementById('tag').innerHTML = pt
+  ? 'Um gateway de e-mail para pessoas e agentes de IA. <b>Cada um com as suas caixas e as suas permissões.</b>'
+  : 'One email gateway for people and AI agents. <b>Each with its own mailboxes and permissions.</b>';
+document.getElementById('sub').textContent = pt ? 'MCP, REST e um app web instalável. MIT.' : 'MCP, REST and an installable web app. MIT.';
+</script></body></html>

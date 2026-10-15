@@ -1,0 +1,450 @@
+"""Web app: off by default, passkey sessions, the same grants as agents, push, watcher."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from mailgrant import audit
+from mailgrant.cli import main as cli_main
+from mailgrant.config import load_config
+from mailgrant.server import create_app
+from mailgrant.web.push import Pusher
+from mailgrant.web.store import Store
+from mailgrant.web.watcher import Watcher
+
+AGENT = "EXAMPLE-agent-token"
+ORIGIN = "https://mail.example.org"
+H = {"X-Mailgrant": "1", "Origin": ORIGIN}
+
+
+def config_text(tmp_path: Path, web: str | None = None) -> str:
+    body = f"""
+agents:
+  - {{name: hermes, token: "{AGENT}", mailboxes: [alpha], scopes: [read, send]}}
+mailboxes:
+  - name: alpha
+    imap: {{host: mail.invalid, username: alpha@example.org, password: a}}
+    smtp: {{host: mail.invalid, username: alpha@example.org, password: a,
+      from_address: alpha@example.org}}
+  - name: beta
+    imap: {{host: mail.invalid, username: beta@example.org, password: b}}
+"""
+    if web is not None:
+        body += web.replace("DATA", str(tmp_path / "data"))
+    p = tmp_path / "config.yaml"
+    p.write_text(body)
+    return str(p)
+
+
+WEB = f"""
+web:
+  origin: {ORIGIN}
+  data_dir: DATA
+  poll_seconds: 3600
+  user: {{name: lucas, mailboxes: ["*"], scopes: [read, mark, send]}}
+"""
+
+
+@pytest.fixture
+def web_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("mailgrant.web.watcher.Watcher.start", lambda self: False)
+    cfg = load_config(config_text(tmp_path, WEB))
+    with TestClient(create_app(cfg), base_url=ORIGIN) as client:
+        client.store = client.app.state.web_store  # type: ignore[attr-defined]
+        yield client
+    audit.clear_sinks()
+
+
+def sign_in(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
+    store: Store = client.store  # type: ignore[attr-defined]
+    from datetime import timedelta
+
+    invite = store.create_invite(timedelta(minutes=5))
+    monkeypatch.setattr(
+        "mailgrant.web.api.verify_registration_response",
+        Mock(
+            return_value=SimpleNamespace(
+                credential_id=b"cred-1", credential_public_key=b"pk", sign_count=0
+            )
+        ),
+    )
+    opts = client.post("/app/api/auth/register/options", headers=H, json={"invite": invite})
+    assert opts.status_code == 200, opts.text
+    done = client.post(
+        "/app/api/auth/register/verify",
+        headers=H,
+        json={"challenge_id": opts.json()["challenge_id"], "name": "iPhone", "credential": {}},
+    )
+    assert done.status_code == 200, done.text
+    return invite
+
+
+# ── off by default ──────────────────────────────────────────────────────────
+
+
+def test_without_web_section_nothing_changes(tmp_path: Path) -> None:
+    cfg = load_config(config_text(tmp_path))
+    with TestClient(create_app(cfg)) as client:
+        assert client.get("/app/").status_code == 401  # just another bearer-protected path
+        assert client.get("/").status_code == 401
+        assert (
+            client.get("/whoami", headers={"Authorization": f"Bearer {AGENT}"}).status_code == 200
+        )
+    assert not (tmp_path / "data").exists()
+
+
+def test_enabled_false_is_off(tmp_path: Path) -> None:
+    cfg = load_config(config_text(tmp_path, WEB + "  enabled: false\n"))
+    assert cfg.web is not None and not cfg.web_enabled
+    with TestClient(create_app(cfg)) as client:
+        assert client.get("/app/").status_code == 401
+
+
+def test_origin_must_be_secure(tmp_path: Path) -> None:
+    from mailgrant.config import ConfigError
+
+    with pytest.raises(ConfigError, match="secure origin"):
+        load_config(config_text(tmp_path, WEB.replace(ORIGIN, "http://mail.example.org")))
+
+
+# ── shell and headers ───────────────────────────────────────────────────────
+
+
+def test_shell_is_served_with_strict_headers(web_client: TestClient) -> None:
+    r = web_client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"] == "/app/"
+    page = web_client.get("/app/")
+    assert page.status_code == 200 and "app.js" in page.text
+    csp = page.headers["content-security-policy"]
+    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
+    assert web_client.get("/app/sw.js").headers["content-type"].startswith("text/javascript")
+    assert web_client.get("/app/manifest.webmanifest").status_code == 200
+    assert web_client.get("/app/static/icons/icon-192.png").status_code == 200
+
+
+def test_agents_still_need_their_token(web_client: TestClient) -> None:
+    assert web_client.get("/mailboxes").status_code == 401
+    assert (
+        web_client.get("/whoami", headers={"Authorization": f"Bearer {AGENT}"}).json()["agent"]
+        == "hermes"
+    )
+
+
+# ── sessions ────────────────────────────────────────────────────────────────
+
+
+def test_api_needs_a_session(web_client: TestClient) -> None:
+    assert web_client.get("/app/api/me").status_code == 401
+    state = web_client.get("/app/api/auth/state").json()
+    assert state == {"authenticated": False, "has_passkeys": False, "user": "lucas"}
+
+
+def test_register_needs_a_valid_invite(web_client: TestClient) -> None:
+    r = web_client.post("/app/api/auth/register/options", headers=H, json={"invite": "nope"})
+    assert r.status_code == 403
+
+
+def test_csrf_header_and_origin_are_enforced(web_client: TestClient) -> None:
+    assert web_client.post("/app/api/auth/login/options").status_code == 403
+    bad = {"X-Mailgrant": "1", "Origin": "https://evil.example"}
+    assert web_client.post("/app/api/auth/login/options", headers=bad).status_code == 403
+    assert web_client.post("/app/api/auth/login/options", headers=H).status_code == 200
+
+
+def test_invite_registers_once_and_opens_a_session(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    invite = sign_in(web_client, monkeypatch)
+    cookie = web_client.cookies.get("mg_session")
+    assert cookie
+    me = web_client.get("/app/api/me").json()
+    assert me["user"] == "lucas" and me["scopes"] == ["mark", "read", "send"]
+    assert [m["name"] for m in me["mailboxes"]] == ["alpha", "beta"]
+    assert web_client.get("/app/api/passkeys").json()["passkeys"][0]["name"] == "iPhone"
+    # The same invite cannot register a second device.
+    web_client.cookies.clear()
+    again = web_client.post("/app/api/auth/register/options", headers=H, json={"invite": invite})
+    assert again.status_code == 403
+
+
+def test_login_with_a_known_passkey(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    web_client.post("/app/api/auth/logout", headers=H)
+    web_client.cookies.clear()
+    assert web_client.get("/app/api/me").status_code == 401
+    monkeypatch.setattr(
+        "mailgrant.web.api.verify_authentication_response",
+        Mock(return_value=SimpleNamespace(new_sign_count=1)),
+    )
+    opts = web_client.post("/app/api/auth/login/options", headers=H).json()
+    from webauthn.helpers import bytes_to_base64url
+
+    unknown = web_client.post(
+        "/app/api/auth/login/verify",
+        headers=H,
+        json={"challenge_id": opts["challenge_id"], "credential": {"id": "x"}},
+    )
+    assert unknown.status_code == 401
+    opts = web_client.post("/app/api/auth/login/options", headers=H).json()
+    ok = web_client.post(
+        "/app/api/auth/login/verify",
+        headers=H,
+        json={
+            "challenge_id": opts["challenge_id"],
+            "credential": {"id": bytes_to_base64url(b"cred-1")},
+        },
+    )
+    assert ok.status_code == 200
+    assert web_client.get("/app/api/me").status_code == 200
+
+
+def test_last_passkey_cannot_be_removed(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    pid = web_client.get("/app/api/passkeys").json()["passkeys"][0]["id"]
+    assert web_client.delete(f"/app/api/passkeys/{pid}", headers=H).status_code == 409
+
+
+# ── mail through the person's grant ─────────────────────────────────────────
+
+
+def test_inbox_shows_agent_marks(web_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    sign_in(web_client, monkeypatch)
+    search = Mock(
+        return_value={
+            "messages": [
+                {
+                    "uid": "7",
+                    "mailbox": "alpha",
+                    "mailbox_address": "alpha@example.org",
+                    "from": "Ana <ana@x.org>",
+                    "subject": "Oi",
+                    "date": "Tue, 14 Oct 2026 10:00:00 -0300",
+                    "flags": [],
+                    "message_id": "<m7@x>",
+                },
+                {
+                    "uid": "8",
+                    "mailbox": "alpha",
+                    "mailbox_address": "alpha@example.org",
+                    "from": "b@x.org",
+                    "subject": "Re",
+                    "date": "Tue, 14 Oct 2026 09:00:00 -0300",
+                    "flags": ["\\Seen"],
+                    "message_id": "<m8@x>",
+                },
+            ],
+            "errors": [],
+        }
+    )
+    monkeypatch.setattr("mailgrant.web.api.imap_unified_search", search)
+    audit.record("hermes", "get_message", mailbox="alpha", uid="7")
+    audit.record("hermes", "send", mailbox="alpha", to=["b@x.org"], in_reply_to="<m8@x>")
+    audit.record("lucas", "get_message", mailbox="alpha", uid="8")  # the person: no mark
+    msgs = web_client.get("/app/api/inbox").json()["messages"]
+    assert [(m["uid"], m["unread"], m["mark"], m["from"]) for m in msgs] == [
+        ("7", True, "hermes leu", "Ana"),
+        ("8", False, "hermes respondeu", "b@x.org"),
+    ]
+    activity = web_client.get("/app/api/activity").json()["events"]
+    assert {e["agent"] for e in activity} == {"hermes"}
+
+
+def test_person_scopes_are_enforced(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    delete = Mock()
+    monkeypatch.setattr("mailgrant.web.api.imap_delete", delete)
+    r = web_client.post("/app/api/messages/alpha/7/trash", headers=H, json={})
+    assert r.status_code == 403  # web.user has no delete scope
+    delete.assert_not_called()
+
+
+def test_send_threads_and_checks_sender(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    send = Mock(return_value={"message_id": "<new@x>"})
+    monkeypatch.setattr("mailgrant.web.api.smtp_send", send)
+    spoof = web_client.post(
+        "/app/api/send",
+        headers=H,
+        json={
+            "mailbox": "alpha",
+            "to": ["a@x.org"],
+            "subject": "s",
+            "body_text": "b",
+            "from_address": "ceo@x.org",
+        },
+    )
+    assert spoof.status_code == 403
+    ok = web_client.post(
+        "/app/api/send",
+        headers=H,
+        json={
+            "mailbox": "alpha",
+            "to": ["a@x.org"],
+            "subject": "Re: s",
+            "body_text": "b",
+            "in_reply_to": "<m7@x>",
+            "references": "<m7@x>",
+        },
+    )
+    assert ok.status_code == 200
+    assert send.call_args.kwargs["in_reply_to"] == "<m7@x>"
+    no_smtp = web_client.post(
+        "/app/api/send", headers=H, json={"mailbox": "beta", "to": ["a@x.org"]}
+    )
+    assert no_smtp.status_code == 409
+
+
+def test_message_and_attachment_download(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    monkeypatch.setattr(
+        "mailgrant.web.api.imap_fetch",
+        Mock(
+            return_value={
+                "from": "Ana <ana@x.org>",
+                "subject": "Oi",
+                "date": "Tue, 14 Oct 2026 10:00:00 -0300",
+                "message_id": "<m7@x>",
+                "body_reader": "Texto",
+                "attachments": [{"index": 0, "filename": "a.html"}],
+            }
+        ),
+    )
+    m = web_client.get("/app/api/messages/alpha/7").json()
+    assert m["body"] == "Texto" and m["can"] == {"reply": True, "mark": True, "trash": False}
+    monkeypatch.setattr(
+        "mailgrant.web.api.imap_attachment", Mock(return_value=("a.html", "text/html", b"<script>"))
+    )
+    r = web_client.get("/app/api/messages/alpha/7/attachments/0")
+    # Never rendered inline: an HTML attachment would run in our origin.
+    assert r.headers["content-disposition"].startswith("attachment;")
+    assert r.headers["content-type"] == "application/octet-stream"
+
+
+# ── notifications ───────────────────────────────────────────────────────────
+
+
+def test_prefs_and_push_subscription(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    prefs = web_client.get("/app/api/prefs").json()
+    assert prefs == {"notify": {"alpha": True, "beta": True}, "notify_agent_send": True}
+    prefs = web_client.put(
+        "/app/api/prefs", headers=H, json={"notify": {"beta": False, "ghost": True}}
+    ).json()
+    assert prefs["notify"] == {"alpha": True, "beta": False}
+    assert (
+        len(web_client.get("/app/api/push/key").json()["key"]) == 87
+    )  # 65-byte P-256 point, base64url
+    bad = web_client.post(
+        "/app/api/push/subscribe", headers=H, json={"endpoint": "http://x", "keys": {}}
+    )
+    assert bad.status_code == 422
+    good = web_client.post(
+        "/app/api/push/subscribe",
+        headers=H,
+        json={"endpoint": "https://push.example/abc", "keys": {"p256dh": "k", "auth": "a"}},
+    )
+    assert good.status_code == 200
+    assert len(web_client.store.push_subscriptions()) == 1  # type: ignore[attr-defined]
+
+
+def test_watcher_pushes_only_what_arrived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_config(config_text(tmp_path, WEB))
+    store = Store(str(tmp_path / "data"))
+    pusher = Mock(spec=Pusher)
+    w = Watcher(cfg, store, pusher)
+    status = {
+        "alpha": {"uidnext": 10, "uidvalidity": 1, "unseen": 0},
+        "beta": {"uidnext": 5, "uidvalidity": 1, "unseen": 0},
+    }
+    monkeypatch.setattr(
+        "mailgrant.web.watcher.mailbox_status",
+        lambda imap: status["alpha" if imap.username.startswith("alpha") else "beta"],
+    )
+    headers = Mock(
+        return_value=[{"uid": "10", "from": "Ana <ana@x.org>", "subject": "Oi", "flags": []}]
+    )
+    monkeypatch.setattr("mailgrant.web.watcher.headers_since", headers)
+
+    assert w.check_once() == []  # first round: baseline only
+    status["alpha"] = {"uidnext": 11, "uidvalidity": 1, "unseen": 1}
+    sent = w.check_once()
+    assert [p["title"] for p in sent] == ["Ana"] and sent[0]["url"] == "/app/#/m/alpha/10"
+    assert sent[0]["badge"] == 1
+    headers.assert_called_once()
+    assert headers.call_args.args[1] == 10
+
+    store.set_pref("notify", {"alpha": False})
+    status["alpha"] = {"uidnext": 12, "uidvalidity": 1, "unseen": 2}
+    assert w.check_once() == []
+
+
+def test_agent_send_triggers_a_push(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "mailgrant.web.push.Pusher.send_all", lambda self, payload: calls.append(payload) or 1
+    )
+    monkeypatch.setattr("threading.Thread.start", lambda self: self.run())
+    audit.record("hermes", "send", mailbox="alpha", to=["c@x.org"], message_id="<z@x>")
+    assert calls and calls[0]["title"] == "hermes enviou um e-mail"
+    assert "alpha@example.org" in calls[0]["body"]
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def test_cli_invite(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = config_text(tmp_path, WEB)
+    assert cli_main(["invite", "--config", path, "--minutes", "5"]) == 0
+    url = capsys.readouterr().out.strip().splitlines()[-1].strip()
+    assert url.startswith(f"{ORIGIN}/app/#/invite/")
+    assert Store(str(tmp_path / "data")).invite_valid(url.rsplit("/", 1)[1])
+    off = config_text(tmp_path)
+    assert cli_main(["invite", "--config", off]) == 1
+
+
+def test_history_table_holds_no_bodies(tmp_path: Path) -> None:
+    store = Store(str(tmp_path / "data"))
+    store.add_audit(
+        {
+            "ts": "2026-10-14T00:00:00+00:00",
+            "agent": "hermes",
+            "action": "send",
+            "outcome": "ok",
+            "mailbox": "alpha",
+            "to": ["x@y"],
+        },
+        "agent",
+    )
+    row = store.agent_activity(None, 10)[0]
+    assert json.loads(row["fields"]) == {"to": ["x@y"]}
+
+
+def test_store_survives_concurrent_first_start(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    data = str(tmp_path / "data")
+    with ThreadPoolExecutor(8) as ex:
+        stores = list(ex.map(lambda _: Store(data), range(8)))
+    stores[0].set_pref("x", 1)
+    assert stores[-1].get_pref("x") == 1

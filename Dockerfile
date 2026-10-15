@@ -38,9 +38,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WORKERS=2 \
     MAILGRANT_CONFIG=/etc/mailgrant/config.yaml
 
+# /data only holds the web app's SQLite (passkeys, push devices, history);
+# an MCP-only instance never writes to it.
 RUN useradd --create-home --shell /bin/bash mailgrant \
-    && mkdir -p /etc/mailgrant \
-    && chown mailgrant:mailgrant /etc/mailgrant
+    && mkdir -p /etc/mailgrant /data \
+    && chown mailgrant:mailgrant /etc/mailgrant /data
 
 WORKDIR /app
 

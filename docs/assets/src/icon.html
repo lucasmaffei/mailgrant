@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face { font-family: "Inter Tight"; src: url("../../../src/mailgrant/web/static/fonts/inter-tight.woff2") format("woff2"); font-weight: 500 600; }
+html, body { margin: 0; background: transparent; }
+.icon { width: 512px; height: 512px; display: flex; align-items: center; justify-content: center; background: #05090b; }
+.icon.maskable span { transform: scale(0.78); }
+.icon.badge { background: transparent; }
+.mark { font-family: "Inter Tight", sans-serif; font-weight: 500; font-size: 300px; letter-spacing: -0.04em; color: #f7f8f8; line-height: 1; display: inline-flex; align-items: baseline; transform: translateY(-14px); }
+.mark i { font-style: normal; color: #38cfff; margin-left: 4px; }
+.badge .mark, .badge .mark i { color: #ffffff; font-weight: 600; }
+</style></head>
+<body><div class="icon" id="icon"><span class="mark">m<i>.</i></span></div>
+<script>
+const v = new URLSearchParams(location.search).get('v') || 'icon';
+if (v === 'maskable') document.getElementById('icon').classList.add('maskable');
+if (v === 'badge') document.getElementById('icon').classList.add('badge');
+</script></body></html>

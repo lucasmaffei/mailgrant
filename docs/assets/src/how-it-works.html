@@ -1,162 +1,69 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><link rel="stylesheet" href="tokens.css">
-<script>
-  const q = new URLSearchParams(location.search);
-  document.documentElement.dataset.theme = q.get('theme') || 'dark';
-  document.documentElement.lang = q.get('lang') || 'en';
-</script>
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="readme.css">
 <style>
-  body { width: 1280px; height: 600px; overflow: hidden; position: relative; }
-  .col-title { position: absolute; top: 40px; font-size: 15px; color: var(--muted); font-weight: 600; }
-
-  .agent { position: absolute; left: 64px; width: 300px; background: var(--paper); color: var(--ink-on-paper); border-radius: 6px 22px 22px 6px; padding: 16px 20px 16px 38px; box-shadow: 0 3px 0 rgba(0,0,0,.2); }
-  :root[data-theme="light"] .agent { box-shadow: 0 0 0 1.5px var(--door-edge), 0 3px 0 rgba(20,32,46,.06); }
-  .agent::before { content: ''; position: absolute; left: 14px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; border: 2.5px solid var(--brass); }
-  .agent .who { font-size: 21px; font-weight: 600; }
-  .scopes { display: flex; gap: 6px; margin-top: 9px; }
-  .scope { font-size: 13px; padding: 3px 9px 4px; border-radius: 999px; border: 1.5px solid #14202e; }
-  .scope.no { border: 1.5px dashed #b5c0cc; color: #9aa8b6; }
-
-  .gate { position: absolute; left: 520px; top: 108px; width: 250px; height: 400px; background: var(--door); border: 2px solid var(--door-edge); border-radius: 10px; padding: 26px 24px; }
-  .gate .name { display: flex; align-items: center; gap: 10px; font-size: 27px; font-weight: 800; letter-spacing: -.02em; }
-  .gate .name svg { width: 34px; height: 34px; }
-  .gate ul { list-style: none; margin-top: 22px; }
-  .gate li { font-size: 15.5px; line-height: 1.35; color: var(--muted); padding: 11px 0; border-top: 1.5px solid var(--door-edge); }
-  .gate li b { color: var(--text); font-weight: 600; }
-
-  .mbox { position: absolute; left: 924px; width: 300px; height: 84px; background: var(--door); border: 2px solid var(--door-edge); border-radius: 8px; display: flex; align-items: center; gap: 16px; padding: 0 18px; }
-  .mbox .plate { font-family: 'Big Shoulders Display', sans-serif; font-weight: 800; font-size: 26px; color: var(--brass); width: 44px; }
-  .mbox .addr { font-size: 15px; font-weight: 600; }
-  .mbox .note { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .mbox.locked { opacity: .55; }
-  .mbox .lock { margin-left: auto; width: 14px; height: 20px; position: relative; }
-  .mbox .lock::before { content: ''; position: absolute; left: 2px; top: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-  .mbox .lock::after { content: ''; position: absolute; left: 5px; top: 7px; width: 4px; height: 12px; background: var(--muted); }
-
-  svg.wires { position: absolute; inset: 0; z-index: 0; }
-  .agent, .gate, .mbox { z-index: 1; }
-
-  .stamp { position: absolute; z-index: 3; border: 3px solid var(--denied); color: var(--denied); border-radius: 10px; padding: 5px 11px 6px; transform: rotate(-7deg); white-space: nowrap; background: color-mix(in srgb, var(--lobby) 88%, transparent); }
-  .stamp .big { font-size: 20px; font-weight: 800; letter-spacing: .01em; line-height: 1.05; }
-  .stamp .small { font-size: 12.5px; font-weight: 600; }
-
-  .audit { position: absolute; left: 520px; top: 528px; width: 696px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; color: var(--muted); }
-  .audit .d { color: var(--denied); }
-  .audit .ok { color: var(--granted); }
-</style></head>
-<body>
-  <div class="col-title" style="left:64px" id="t0"></div>
-  <div class="col-title" style="left:520px" id="t1"></div>
-  <div class="col-title" style="left:924px" id="t2"></div>
-
-  <div class="agent" id="a0" style="top:120px"><div class="who"></div><div class="scopes"></div></div>
-  <div class="agent" id="a1" style="top:262px"><div class="who"></div><div class="scopes"></div></div>
-  <div class="agent" id="a2" style="top:404px"><div class="who"></div><div class="scopes"></div></div>
-
-  <div class="gate" id="gate">
-    <div class="name"><svg viewBox="0 0 64 64"><rect x="3" y="3" width="58" height="58" rx="10" fill="var(--lobby)" stroke="var(--door-edge)" stroke-width="3"/><circle cx="32" cy="27" r="9" fill="var(--brass)"/><rect x="28.5" y="31" width="7" height="18" rx="2" fill="var(--brass)"/></svg>mailgrant</div>
-    <ul id="points"></ul>
-  </div>
-
-  <div class="mbox" id="m0" style="top:108px"><span class="plate">101</span><div><div class="addr"></div><div class="note"></div></div></div>
-  <div class="mbox" id="m1" style="top:212px"><span class="plate">102</span><div><div class="addr"></div><div class="note"></div></div></div>
-  <div class="mbox" id="m2" style="top:316px"><span class="plate">103</span><div><div class="addr"></div><div class="note"></div></div></div>
-  <div class="mbox locked" id="m3" style="top:420px"><span class="plate">104</span><div><div class="addr"></div><div class="note"></div></div><span class="lock"></span></div>
-
-  <div class="audit" id="audit"></div>
-
+body { width: 1280px; height: 660px; position: relative; overflow: hidden; }
+.h { position: absolute; top: 44px; font-size: 14px; color: var(--faint); }
+.node { position: absolute; left: 72px; width: 300px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); z-index: 1; }
+.node b { display: block; font-size: 18px; font-weight: 500; }
+.node .mono { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.node.you { border-color: rgba(56,207,255,.35); }
+.gate { position: absolute; left: 500px; top: 120px; width: 290px; height: 430px; padding: 26px 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); z-index: 1; }
+.gate .word { font-size: 30px; }
+.gate ul { list-style: none; margin-top: 18px; }
+.gate li { padding: 13px 0; border-top: 1px solid var(--line); font-size: 15px; line-height: 1.4; color: var(--muted); }
+.gate li b { color: var(--text); font-weight: 500; }
+.box { position: absolute; left: 920px; width: 290px; height: 64px; padding: 0 18px; display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); z-index: 1; }
+.box b { font-size: 15px; font-weight: 500; }
+.box .mono { font-size: 11px; color: var(--faint); margin-top: 3px; }
+.box.off { opacity: .45; }
+svg.w { position: absolute; inset: 0; }
+.denied { position: absolute; z-index: 2; font-size: 12px; color: var(--warn); background: var(--bg); padding: 2px 6px; }
+.audit { position: absolute; left: 500px; top: 584px; font-size: 12px; color: var(--faint); line-height: 1.7; }
+.audit .d { color: var(--warn); } .audit .ok { color: var(--accent); }
+</style></head><body>
+<span class="h" id="h0" style="left:72px"></span><span class="h" id="h1" style="left:500px"></span><span class="h" id="h2" style="left:920px"></span>
+<div class="node" id="a0" style="top:120px"><b>hermes</b><span class="mono">read · mark · send</span></div>
+<div class="node" id="a1" style="top:226px"><b>support-bot</b><span class="mono">read · send</span></div>
+<div class="node" id="a2" style="top:332px"><b>finance-bot</b><span class="mono">read</span></div>
+<div class="node you" id="a3" style="top:470px"><b id="you"></b><span class="mono" id="yousub"></span></div>
+<div class="gate" id="gate"><div class="word">mailgrant<i>.</i></div><ul id="pts"></ul></div>
+<div class="box" id="m0" style="top:120px"><b id="b0"></b><span class="mono" id="n0"></span></div>
+<div class="box" id="m1" style="top:226px"><b id="b1"></b><span class="mono" id="n1"></span></div>
+<div class="box" id="m2" style="top:332px"><b id="b2"></b><span class="mono" id="n2"></span></div>
+<div class="box off" id="m3" style="top:438px"><b id="b3"></b><span class="mono" id="n3"></span></div>
+<div class="audit mono" id="audit"></div>
 <script>
-  const T = {
-    en: {
-      titles: ['Agents, one token each', 'The gateway', 'Your mailboxes'],
-      agents: ['support-bot', 'finance-bot', 'assistant'],
-      points: [
-        ['Checks every call', "against the token's mailboxes and scopes."],
-        ['Hides the rest.', "Mailboxes outside a grant look like they don't exist."],
-        ['Keeps the passwords.', 'Agents never see them.'],
-        ['Writes an audit line', 'for each operation.'],
-      ],
-      boxes: [['contact@example.com', 'support-bot, assistant'], ['billing@example.com', 'finance-bot, assistant'],
-              ['ops@example.com', 'assistant'], ['ceo@example.com', 'no agent granted']],
-      stamp: ['denied', 'no send scope'],
-    },
-    'pt-BR': {
-      titles: ['Agentes, um token cada', 'O gateway', 'Suas caixas'],
-      agents: ['atendimento', 'financeiro', 'assistente'],
-      points: [
-        ['Confere toda chamada', 'contra as caixas e os escopos do token.'],
-        ['Esconde o resto.', 'Caixas fora da permissão parecem não existir.'],
-        ['Guarda as senhas.', 'Os agentes nunca as veem.'],
-        ['Registra cada operação', 'numa linha de auditoria.'],
-      ],
-      boxes: [['contato@loja.com.br', 'atendimento, assistente'], ['financeiro@loja.com.br', 'financeiro, assistente'],
-              ['ops@loja.com.br', 'assistente'], ['diretoria@loja.com.br', 'nenhum agente liberado']],
-      stamp: ['negado', 'sem o escopo send'],
-    },
-  }[document.documentElement.lang];
-  T.titles.forEach((t, i) => document.getElementById('t' + i).textContent = t);
-  T.agents.forEach((t, i) => document.querySelector(`#a${i} .who`).textContent = t);
-  document.getElementById('points').innerHTML = T.points.map(([b, r]) => `<li><b>${b}</b> ${r}</li>`).join('');
-  T.boxes.forEach(([a, n], i) => {
-    document.querySelector(`#m${i} .addr`).textContent = a;
-    document.querySelector(`#m${i} .note`).textContent = n;
-  });
-
-  const ALL = ['read', 'mark', 'delete', 'send'];
-  const agents = [
-    { scopes: ['read', 'mark', 'send'], boxes: [0] },
-    { scopes: ['read'], boxes: [1] },
-    { scopes: ['read', 'mark', 'delete', 'send'], boxes: [0, 1, 2] },
-  ];
-  agents.forEach((a, i) => {
-    document.querySelector(`#a${i} .scopes`).innerHTML =
-      ALL.map(s => `<span class="scope ${a.scopes.includes(s) ? '' : 'no'}">${s}</span>`).join('');
-  });
-
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('class', 'wires'); svg.setAttribute('width', 1280); svg.setAttribute('height', 600);
-  document.body.prepend(svg);
-  const rect = id => document.getElementById(id).getBoundingClientRect();
-  const path = (d, color, dash) => {
-    const p = document.createElementNS(NS, 'path');
-    p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', color);
-    p.setAttribute('stroke-width', 3); p.setAttribute('stroke-linecap', 'round');
-    if (dash) p.setAttribute('stroke-dasharray', dash);
-    svg.appendChild(p);
-  };
-  const curve = (x1, y1, x2, y2) => `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
-  const gate = rect('gate');
-  const brass = 'var(--brass)', red = 'var(--denied)';
-
-  // agent -> gateway, entering at evenly spaced ports
-  agents.forEach((a, i) => {
-    const r = rect(`a${i}`);
-    const portY = gate.top + 110 + i * 100;
-    path(curve(r.right, r.top + r.height / 2, gate.left, portY), brass);
-  });
-  // gateway -> granted mailboxes
-  [0, 1, 2].forEach(m => {
-    const r = rect(`m${m}`);
-    path(curve(gate.right, r.top + r.height / 2, r.left, r.top + r.height / 2), brass);
-  });
-  // nothing reaches ceo@
-  const ceo = rect('m3');
-  path(curve(gate.right, ceo.top + ceo.height / 2, ceo.left - 40, ceo.top + ceo.height / 2), 'var(--door-edge)', '2 9');
-
-  // finance-bot tries to send: stopped at the gateway
-  const fin = rect('a1');
-  const sy = fin.top + fin.height / 2 + 30;
-  path(`M ${fin.right - 30} ${fin.bottom} C ${fin.right + 40} ${sy + 34}, ${gate.left - 90} ${sy + 34}, ${gate.left - 8} ${sy + 24}`, red, '7 7');
-  const stamp = document.createElement('div');
-  stamp.className = 'stamp';
-  stamp.innerHTML = `<div class="big">${T.stamp[0]}</div><div class="small">${T.stamp[1]}</div>`;
-  document.body.appendChild(stamp);
-  stamp.style.left = (gate.left - 158) + 'px';
-  stamp.style.top = (fin.bottom + 22) + 'px';
-
-  document.getElementById('audit').innerHTML =
-    `{"agent": "${T.agents[1]}", "action": "send", "outcome": <span class="d">"denied"</span>, "reason": "scope"}<br>` +
-    `{"agent": "${T.agents[2]}", "action": "get_message", "outcome": <span class="ok">"ok"</span>, "mailbox": "ops"}`;
-</script>
-</body></html>
+const pt = new URLSearchParams(location.search).get('lang') === 'pt-BR';
+const T = pt ? {
+  h: ['Quem usa', 'O gateway', 'Suas caixas'],
+  you: ['Você, no app web', 'passkey · tudo que o config der'],
+  pts: [['Confere toda chamada', 'contra as caixas e os escopos.'], ['Esconde o resto.', 'Caixa fora da permissão parece não existir.'], ['Guarda as senhas.', 'Ninguém mais as vê.'], ['Registra e avisa:', 'auditoria e push no celular.']],
+  boxes: [['contato@loja.com.br', 'hermes, support-bot, você'], ['financeiro@loja.com.br', 'finance-bot, você'], ['lucas@loja.com.br', 'hermes, você'], ['diretoria@loja.com.br', 'ninguém']],
+  denied: 'negado: finance-bot não tem send', a: ['finance-bot', 'hermes'],
+} : {
+  h: ['Who uses it', 'The gateway', 'Your mailboxes'],
+  you: ['You, in the web app', 'passkey · whatever the config grants'],
+  pts: [['Checks every call', 'against mailboxes and scopes.'], ['Hides the rest.', 'A mailbox outside a grant looks like it doesn’t exist.'], ['Keeps the passwords.', 'Nobody else sees them.'], ['Records and tells you:', 'audit log and phone push.']],
+  boxes: [['contact@shop.com', 'hermes, support-bot, you'], ['billing@shop.com', 'finance-bot, you'], ['lucas@shop.com', 'hermes, you'], ['ceo@shop.com', 'nobody']],
+  denied: 'denied: finance-bot has no send', a: ['finance-bot', 'hermes'],
+};
+T.h.forEach((t, i) => document.getElementById('h' + i).textContent = t);
+document.getElementById('you').textContent = T.you[0]; document.getElementById('yousub').textContent = T.you[1];
+document.getElementById('pts').innerHTML = T.pts.map(([b, r]) => `<li><b>${b}</b> ${r}</li>`).join('');
+T.boxes.forEach(([b, n], i) => { document.getElementById('b' + i).textContent = b; document.getElementById('n' + i).textContent = n; });
+document.getElementById('audit').innerHTML =
+  `{"agent": "finance-bot", "action": "send", "outcome": <span class="d">"denied"</span>, "reason": "scope"}<br>` +
+  `{"agent": "hermes", "action": "get_message", "outcome": <span class="ok">"ok"</span>, "mailbox": "lucas"}`;
+const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+svg.setAttribute('class', 'w'); svg.setAttribute('width', 1280); svg.setAttribute('height', 660); document.body.prepend(svg);
+const R = (id) => document.getElementById(id).getBoundingClientRect();
+const line = (d, color, dash) => { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', color); p.setAttribute('stroke-width', 1.5); if (dash) p.setAttribute('stroke-dasharray', dash); svg.appendChild(p); };
+const curve = (x1, y1, x2, y2) => `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
+const g = R('gate'), cyan = 'rgba(56,207,255,.75)';
+[0, 1, 2, 3].forEach((i) => { const r = R('a' + i); line(curve(r.right, r.top + r.height / 2, g.left, g.top + 90 + i * 90), cyan); });
+[0, 1, 2].forEach((i) => { const r = R('m' + i); line(curve(g.right, r.top + r.height / 2, r.left, r.top + r.height / 2), cyan); });
+const c = R('m3'); line(`M ${g.right} ${c.top + c.height / 2} L ${c.left} ${c.top + c.height / 2}`, 'rgba(255,255,255,.12)', '2 6');
+const f = R('a2'); line(`M ${f.right - 40} ${f.bottom} C ${f.right + 20} ${f.bottom + 40}, ${g.left - 70} ${f.bottom + 40}, ${g.left - 6} ${f.bottom + 22}`, '#f5b54a', '5 5');
+const tag = document.createElement('span'); tag.className = 'denied mono'; tag.textContent = T.denied; document.body.appendChild(tag);
+tag.style.left = (f.right - 150) + 'px'; tag.style.top = (f.bottom + 34) + 'px';
+</script></body></html>

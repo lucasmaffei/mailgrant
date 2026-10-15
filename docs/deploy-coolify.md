@@ -134,6 +134,29 @@ mailbox login failed: check that mailbox's password variable.
 
 Now connect your agents: [connect-agents.md](connect-agents.md).
 
+## Optional: the web app
+
+To also read your mail on your phone (see [web-app.md](web-app.md)):
+
+1. **Storages → Add → Volume mount**: destination `/data`. This keeps
+   passkeys, push devices and history across deploys.
+2. Add the `web:` section to `mailgrant.yaml`, with `origin` set to the
+   application's domain:
+
+   ```yaml
+   web:
+     origin: https://mail-mcp.example.com
+     data_dir: /data
+     user: {name: you, mailboxes: ["*"], scopes: [read, mark, delete, send]}
+   ```
+
+3. Re-encode it into `MAILGRANT_CONFIG_B64` and **Restart**.
+4. **Terminal** tab of the application → `mailgrant invite`, and open the link
+   on your phone. Then add it to the Home Screen and turn notifications on.
+
+To turn it off, remove the section (or `enabled: false`) and restart. The
+volume can stay; nothing reads it.
+
 ## Day-to-day operations
 
 **Add a mailbox.** Add it under `mailboxes`, add its password variable, and

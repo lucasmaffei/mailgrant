@@ -10,16 +10,28 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger("mailgrant.audit")
 
 _enabled = True
+# Extra destinations for each entry, e.g. the web app's history table. A
+# failing sink is logged and skipped: auditing must never break a mail call.
+_sinks: list[Callable[[dict[str, Any]], None]] = []
 
 
 def configure(enabled: bool) -> None:
     global _enabled
     _enabled = enabled
+
+
+def add_sink(sink: Callable[[dict[str, Any]], None]) -> None:
+    if sink not in _sinks:
+        _sinks.append(sink)
+
+
+def clear_sinks() -> None:
+    _sinks.clear()
 
 
 def record(agent: str, action: str, outcome: str = "ok", **fields: Any) -> None:
@@ -33,3 +45,8 @@ def record(agent: str, action: str, outcome: str = "ok", **fields: Any) -> None:
     }
     entry.update({k: v for k, v in fields.items() if v is not None})
     log.info(json.dumps(entry, ensure_ascii=False, default=str))
+    for sink in list(_sinks):
+        try:
+            sink(entry)
+        except Exception:  # noqa: BLE001 - see _sinks
+            log.exception("audit sink failed")

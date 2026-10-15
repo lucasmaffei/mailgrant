@@ -517,7 +517,12 @@ def _register_smtp_tools(
             audit.record(who.name, "send", "error", mailbox=mb.name, to=rcpts, error=str(e))
             raise
         audit.record(
-            who.name, "send", mailbox=mb.name, to=rcpts, message_id=result.get("message_id")
+            who.name,
+            "send",
+            mailbox=mb.name,
+            to=rcpts,
+            message_id=result.get("message_id"),
+            in_reply_to=args.get("in_reply_to"),
         )
         return result
 

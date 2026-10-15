@@ -1,57 +1,56 @@
-<h1 align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.pt-BR.png">
-  <img alt="mailgrant — um gateway de e-mail para vários agentes de IA, cada um com a chave das suas caixas" src="docs/assets/hero-light.pt-BR.png" width="1280">
-</picture>
-</h1>
+<p align="center"><img alt="mailgrant — um gateway de e-mail para pessoas e agentes de IA, cada um com as suas caixas e as suas permissões" src="docs/assets/hero.pt-BR.png" width="1280"></p>
 
 <p>
   <a href="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-d4a63a">
-  <img alt="Docker image on GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-22364f?logo=docker&logoColor=white">
-  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-22364f?logo=python&logoColor=white">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22364f"></a>
+  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-38cfff?labelColor=05090b">
+  <img alt="App web: PWA com passkeys" src="https://img.shields.io/badge/app%20web-PWA%20%2B%20passkeys-38cfff?labelColor=05090b">
+  <img alt="Imagem Docker no GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-0b1114?logo=docker&logoColor=white&labelColor=05090b">
+  <a href="LICENSE"><img alt="Licença: MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-0b1114?labelColor=05090b"></a>
 </p>
 
-[English](README.md) · [Deploy no Coolify](docs/deploy-coolify.md) · [Conectar agentes](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
+[English](README.md) · [App web](docs/web-app.pt-BR.md) · [Deploy no Coolify](docs/deploy-coolify.md) · [Conectar agentes](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
 
-O mailgrant fica entre os seus agentes e as suas caixas IMAP/SMTP. Você
-cadastra cada caixa **uma vez** e entrega a cada agente um token que libera
-caixas e ações específicas. Os agentes falam MCP (Streamable HTTP) ou REST; o
-mailgrant aplica a permissão em toda chamada e registra quem fez o quê.
+O mailgrant fica entre as suas caixas IMAP/SMTP e todo mundo que trabalha com
+elas. Você cadastra cada caixa **uma vez** e decide quem recebe quais caixas e
+quais ações:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.pt-BR.png">
-  <img alt="Cada agente com seu token e seus escopos passa pelo mailgrant, que confere toda chamada, esconde as caixas fora da permissão, guarda as senhas e registra cada operação" src="docs/assets/how-it-works-light.pt-BR.png" width="1280">
-</picture>
+- **Agentes** recebem um token e falam MCP (Streamable HTTP) ou REST.
+- **Você** ganha um app web opcional: uma caixa de entrada no celular ou no
+  computador, com login por passkey, notificações push e uma linha do tempo do
+  que cada agente fez.
+
+Toda chamada, dos dois lados, passa pelas mesmas permissões e pela mesma auditoria.
+
+<p align="center"><img alt="Quem usa, o gateway e as suas caixas" src="docs/assets/how-it-works.pt-BR.png" width="1280"></p>
 
 ## Por quê
 
 Os agentes se multiplicam, e as caixas também. Sem um gateway, cada agente
 guarda a própria cópia de cada senha, no próprio servidor, no próprio harness.
 Caixa nova significa passar em todos os agentes; tirar um acesso significa
-torcer para ter achado todas as cópias.
+torcer para ter achado todas as cópias. E você ainda precisa de um lugar para
+ler esses mesmos e-mails.
 
 Com o mailgrant:
 
-- **Caixa nova** é uma entrada num arquivo. Agentes com `"*"` passam a vê-la na hora; os outros, com mais uma linha.
+- **Caixa nova** é uma entrada num arquivo. Agentes com `"*"` passam a vê-la na hora.
 - **Revogar** um agente é apagar o token dele. A senha das caixas nunca sai do gateway.
-- **Mínimo privilégio de verdade**: um agente só-leitura não envia, não apaga nem marca como lido — e nem enxerga essas ferramentas.
-- **Dá para auditar**: uma linha JSON por operação, permitida ou negada.
+- **Mínimo privilégio de verdade**: um agente só-leitura não envia, não apaga nem marca como lido, e nem enxerga essas ferramentas.
+- **Você vê o que eles fizeram**: cada leitura, envio e recusa, no log e no app.
 
 ## Recursos
 
-- **Permissão por agente** — caixas por nome, endereço ou `*`; escopos `read`, `mark`, `delete`, `send`.
-- **Invisível fora da permissão** — uma caixa que o agente não pode usar responde igual a uma que não existe.
-- **Lista de ferramentas filtrada** — o `tools/list` do MCP só mostra o que o token pode chamar.
-- **Caixa de entrada unificada** — uma chamada busca em todas as caixas liberadas, em paralelo, da mais nova para a mais antiga.
-- **Modo leitura** — HTML convertido em texto limpo para o modelo ler.
-- **Apagar com segurança** — vai para a lixeira; apagar de vez exige `permanent=true` e só afeta aquela mensagem.
-- **Respostas na conversa certa** — `in_reply_to` / `references` no envio; cópia opcional de cada envio na pasta Enviados.
-- **Sem falsificar remetente** — `from_address` limitado ao endereço da caixa e aos apelidos declarados.
-- **Auditoria** — só metadados, nunca assunto nem corpo.
-- **Sem estado** — sem banco de dados. A conexão abre por requisição e fecha.
-- **Segredos no ambiente** — `${VARIAVEL}` em qualquer ponto do config, ou o config inteiro em `MAILGRANT_CONFIG_B64` (base64, uma linha) / `MAILGRANT_CONFIG_YAML`.
+- **Permissão por agente**: caixas por nome, endereço ou `*`; escopos `read`, `mark`, `delete`, `send`.
+- **Invisível fora da permissão**: uma caixa que o agente não pode usar responde igual a uma que não existe.
+- **Lista de ferramentas filtrada**: o `tools/list` do MCP só mostra o que o token pode chamar.
+- **Caixa de entrada unificada**: uma chamada busca em todas as caixas liberadas, em paralelo.
+- **Apagar com segurança**: vai para a lixeira; apagar de vez exige `permanent=true` e afeta uma mensagem só.
+- **Respostas na conversa certa** com `in_reply_to`, e cópia de cada envio na pasta Enviados.
+- **Sem falsificar remetente**: `from_address` limitado ao endereço da caixa e aos apelidos declarados.
+- **Auditoria**: só metadados, nunca assunto nem corpo.
+- **App web opcional**: PWA instalável, login por passkey, push, atividade dos agentes. Desligado até você configurar.
+- **Sem estado sem o app**: nenhum banco; a conexão abre por requisição e fecha.
+- **Segredos no ambiente**: `${VARIAVEL}` em qualquer ponto, ou o config inteiro em `MAILGRANT_CONFIG_B64`.
 
 ## Casos de uso
 
@@ -67,6 +66,34 @@ Com o mailgrant:
 Em todos, trocar a senha de uma caixa, tirar o acesso de um agente ou somar
 uma caixa nova é uma mudança no gateway. Nenhum agente precisa ser mexido.
 
+## O app web (opcional)
+
+<p align="center"><img alt="Entrada, mensagem, agentes e ajustes no celular" src="docs/assets/screens.pt-BR.png" width="1280"></p>
+
+Um app pequeno para quem é dono das caixas. Ele vem **desligado**; para ligar,
+acrescente uma seção `web:`:
+
+```yaml
+web:
+  origin: https://mail.exemplo.com.br   # onde você abre
+  data_dir: /data                        # SQLite de passkeys, aparelhos e histórico
+  user: {name: lucas, mailboxes: ["*"], scopes: [read, mark, delete, send]}
+```
+
+Depois, `mailgrant invite` gera um link de uso único: abra no celular, crie a
+passkey, adicione o app à Tela de Início e ligue as notificações.
+
+- **Para desligar**, tire a seção ou escreva `enabled: false`. O `/app` some e
+  nada é vigiado; os agentes não são afetados.
+- Você recebe permissão como um agente, então um celular só de leitura é uma linha.
+- O corpo dos e-mails aparece como texto, anexos sempre baixam, e uma CSP
+  rígida mantém tudo na sua própria origem.
+
+<p align="center"><img alt="O app web no computador" src="docs/assets/desktop.png" width="1100"></p>
+
+Guia completo: **[docs/web-app.pt-BR.md](docs/web-app.pt-BR.md)** (instalar no
+iPhone, notificações, o que fica guardado, segurança, como desligar).
+
 ## Começo rápido
 
 ```bash
@@ -76,8 +103,9 @@ cp config.example.yaml config.yaml
 # 1. Gere um token por agente. O token vai para o agente; o hash fica no config.
 docker run --rm ghcr.io/lucasmaffei/mailgrant:latest mailgrant token --name atendimento
 
-# 2. Edite o config.yaml: suas caixas e os agentes com seus hashes.
-# 3. Valide — mostra quem acessa o quê.
+# 2. Edite o config.yaml: suas caixas, os agentes com seus hashes
+#    e a seção `web:` se quiser o app.
+# 3. Valide: mostra quem acessa o quê.
 docker run --rm -v "$PWD/config.yaml:/etc/mailgrant/config.yaml:ro" \
   ghcr.io/lucasmaffei/mailgrant:latest mailgrant check
 
@@ -85,6 +113,9 @@ docker run --rm -v "$PWD/config.yaml:/etc/mailgrant/config.yaml:ro" \
 docker compose up -d
 curl -s http://127.0.0.1:8000/health
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/whoami
+
+# 5. Só para o app web: um link de uso único para criar a sua passkey.
+docker compose exec mailgrant mailgrant invite
 ```
 
 Sem acesso à imagem publicada? `docker compose up -d --build` constrói a partir do código.
@@ -113,6 +144,11 @@ mailboxes:
       from_address: "Exemplo <contato@exemplo.com.br>"
       allowed_from: [vendas@exemplo.com.br]
       save_copy_to: Sent
+
+web:                                  # opcional: veja "O app web"
+  origin: https://mail.exemplo.com.br
+  data_dir: /data
+  user: {name: lucas, mailboxes: ["*"], scopes: [read, mark, delete, send]}
 ```
 
 O [`config.example.yaml`](config.example.yaml) documenta todas as opções.
@@ -149,6 +185,18 @@ Ler nunca altera a mensagem: as pastas são abertas em modo somente leitura
 | `smtp.from_address` | — | Obrigatório. `From:` padrão |
 | `smtp.allowed_from` | `[]` | Outros `From:` permitidos |
 | `smtp.save_copy_to` | — | Pasta IMAP que recebe a cópia de cada envio (precisa de `imap`) |
+
+### Opções do app web
+
+| Chave | Padrão | Observação |
+|---|---|---|
+| `web.enabled` | `true` | `false` mantém a seção e desliga o app |
+| `web.origin` | — | Obrigatório. `https://host` (ou `http://localhost` para teste) |
+| `web.data_dir` | `/data` | SQLite; precisa persistir entre reinícios |
+| `web.user` | `owner`, `*`, todos os escopos | Recebe permissão como um agente |
+| `web.poll_seconds` | `60` | De quanto em quanto tempo procura e-mail novo para o push |
+| `web.session_days` | `30` | Por quanto tempo o aparelho fica conectado |
+| `web.push_contact` | origin | Contato `mailto:` ou `https:` para os serviços de push |
 
 ## Conectando agentes
 
@@ -267,6 +315,7 @@ Assunto e corpo nunca vão para o log.
 - **Tokens comparados em tempo constante**, todos os candidatos a cada requisição.
 - **Injeção de comando IMAP** bloqueada na entrada: caracteres de controle recusados, nomes de pasta entre aspas, UID só com dígitos.
 - **Apagar nunca surpreende**: lixeira primeiro, `UID EXPUNGE` de uma única mensagem, recusa em servidores sem UIDPLUS.
+- **O app web** entra só com passkey, guarda a sessão em cookie `HttpOnly`/`SameSite=Strict`, confere a `Origin` em toda alteração e usa uma CSP que não carrega nada de outra origem. Detalhes em [docs/web-app.pt-BR.md](docs/web-app.pt-BR.md#segurança).
 - **Um token é tão estreito quanto a permissão dele.** Dê a cada agente o mínimo de caixas e escopos; `"*"` só para quem você confiaria todas.
 
 ## Rodando pelo código
@@ -278,14 +327,18 @@ uv run mailgrant http --config config.yaml   # escuta em 127.0.0.1:8000
 uv run pytest -q
 ```
 
+As imagens e os screenshots do README são gerados a partir de [`docs/assets/src`](docs/assets/src).
+
 ## Créditos
 
 O mailgrant é um fork do [docker-mailbox](https://github.com/psyb0t/docker-mailbox),
 de Ciprian Mandache (psyb0t), que fornece a camada IMAP/SMTP, a caixa de
 entrada unificada, o modo leitura e o transporte MCP. O mailgrant acrescenta
-permissões por agente, auditoria, exclusão segura e envio dentro da conversa.
+permissões por agente, auditoria, exclusão segura, envio dentro da conversa e o
+app web.
 
 ## Licença
 
-MIT — veja [LICENSE](LICENSE). A imagem Docker inclui o `html2text` (GPL-3.0);
-veja [THIRD_PARTY.md](THIRD_PARTY.md).
+MIT — veja [LICENSE](LICENSE). A imagem Docker inclui componentes de terceiros
+com licenças próprias (o html2text é GPL-3.0; as fontes do app são OFL); veja
+[THIRD_PARTY.md](THIRD_PARTY.md).

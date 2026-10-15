@@ -34,6 +34,8 @@ class Principal:
     # Mailbox names this principal may use; None means every mailbox, including
     # ones added to the config later.
     mailboxes: frozenset[str] | None
+    # "agent" for bearer tokens, "person" for the web app's signed-in user.
+    kind: str = "agent"
 
     def can_see(self, mb: MailboxConfig) -> bool:
         return self.mailboxes is None or mb.name in self.mailboxes
@@ -49,18 +51,32 @@ class Principal:
         return [m for m in cfg.mailboxes if self.can_see(m)]
 
 
+def _resolve_refs(cfg: Config, refs: list[str]) -> frozenset[str] | None:
+    if ALL_MAILBOXES in refs:
+        return None
+    return frozenset(mb.name for ref in refs if (mb := cfg.find(ref)) is not None)
+
+
 def _principal_for_agent(cfg: Config, index: int) -> Principal:
     agent = cfg.agents[index]
-    if ALL_MAILBOXES in agent.mailboxes:
-        allowed: frozenset[str] | None = None
-    else:
-        names = set()
-        for ref in agent.mailboxes:
-            mb = cfg.find(ref)
-            if mb is not None:
-                names.add(mb.name)
-        allowed = frozenset(names)
-    return Principal(name=agent.name, scopes=frozenset(agent.scopes), mailboxes=allowed)
+    return Principal(
+        name=agent.name,
+        scopes=frozenset(agent.scopes),
+        mailboxes=_resolve_refs(cfg, agent.mailboxes),
+    )
+
+
+def web_principal(cfg: Config) -> Principal:
+    """The web app's signed-in person, granted by `web.user` like an agent."""
+    if cfg.web is None:
+        raise RuntimeError("web app is not configured")
+    user = cfg.web.user
+    return Principal(
+        name=user.name,
+        scopes=frozenset(user.scopes),
+        mailboxes=_resolve_refs(cfg, user.mailboxes),
+        kind="person",
+    )
 
 
 def authenticate(cfg: Config, presented: str | None) -> Principal | None:

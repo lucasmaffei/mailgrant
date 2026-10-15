@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.0 — the web app
+
+- **Optional web app** at `/app`, turned on by a `web:` section: unified inbox with mailbox filter and search, message reading (HTML shown as text), reply in thread and compose, mark read/unread, move to trash, attachments download, agent activity timeline, settings. Responsive: one column on phones, three on desktops. Interface in Brazilian Portuguese.
+- **Passkeys only** (WebAuthn, user verification required). The first device registers through a one-time invite from `mailgrant invite`; more devices from Settings. Sessions in `HttpOnly`/`Secure`/`SameSite=Strict` cookies, `X-Mailgrant` header and `Origin` check on every change.
+- **Installable PWA** with Web Push (VAPID, generated on first use): per-mailbox notification choice, optional push when an agent sends mail, unread badge on the app icon. New mail is detected by polling `STATUS` every `poll_seconds`; only one worker watches.
+- The signed-in person is granted by `web.user` exactly like an agent, and goes through the same checks and audit log.
+- When the web app is on, the audit log is also kept in SQLite (180 days, metadata only) for the Agents screen and the "hermes leu" / "hermes respondeu" marks.
+- Strict CSP (self only, fonts bundled), security headers, attachments always served as downloads.
+- Without a `web:` section nothing changes: no routes, no database, the web modules aren't loaded.
+- `mailgrant check` reports whether the web app is on. Compose gains a `/data` volume.
+- Send audits record `in_reply_to`. Message results include `references` and attachment `index`.
+- README and docs redone in the web app's look, with real screenshots; guide in `docs/web-app.md`.
+
 ## v0.6.1
 
 - `MAILGRANT_CONFIG_B64`: the whole config as one base64 line. Coolify writes environment variables to a dotenv file, and a multi-line `MAILGRANT_CONFIG_YAML` broke the deploy. The Coolify guide now uses it.

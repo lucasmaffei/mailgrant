@@ -146,7 +146,12 @@ class _BearerASGI:
             await self._app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path in _AUTH_EXEMPT_PATHS:
+        # The web app authenticates people with passkey sessions, not bearer
+        # tokens; its own router checks every /app/api call.
+        web_path = self._cfg.web_enabled and (
+            path == "/" or path == "/app" or path.startswith("/app/")
+        )
+        if path in _AUTH_EXEMPT_PATHS or web_path:
             await self._app(scope, receive, send)
             return
         principal = _principal_from_scope(self._cfg, scope)
@@ -168,11 +173,18 @@ def create_app(config: Config | None = None) -> FastAPI:
     audit.configure(cfg.audit_log)
 
     mcp_manager = build_session_manager(cfg)
+    web_hooks: list[tuple[Any, Any]] = []
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        async with mcp_lifespan(mcp_manager):
-            yield
+        for start, _ in web_hooks:
+            start()
+        try:
+            async with mcp_lifespan(mcp_manager):
+                yield
+        finally:
+            for _, stop in web_hooks:
+                stop()
 
     app = FastAPI(
         title="mailgrant",
@@ -182,6 +194,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     )
 
     app.router.routes.append(Mount(_MCP_PATH, app=mcp_manager.handle_request))
+
+    if cfg.web_enabled:
+        # Imported only here: an MCP-only instance never loads the web stack.
+        from .web import mount as mount_web
+
+        web_hooks.append(mount_web(app, cfg))
 
     app.add_middleware(_MCPSlashNormalizer)
     app.add_middleware(_BearerASGI, cfg=cfg)
@@ -470,7 +488,14 @@ def create_app(config: Config | None = None) -> FastAPI:
         except SmtpError as e:
             audit.record(who, "send", "error", mailbox=mb.name, to=rcpts, error=str(e))
             raise HTTPException(status_code=502, detail=str(e)) from e
-        audit.record(who, "send", mailbox=mb.name, to=rcpts, message_id=result.get("message_id"))
+        audit.record(
+            who,
+            "send",
+            mailbox=mb.name,
+            to=rcpts,
+            message_id=result.get("message_id"),
+            in_reply_to=req.in_reply_to,
+        )
         return result
 
     return app

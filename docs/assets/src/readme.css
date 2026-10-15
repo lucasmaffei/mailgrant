@@ -1,0 +1,13 @@
+/* README art, in the web app's own look (lumahost.com family). */
+@font-face { font-family: "Inter"; src: url("../../../src/mailgrant/web/static/fonts/inter.woff2") format("woff2"); font-weight: 400 600; }
+@font-face { font-family: "Inter Tight"; src: url("../../../src/mailgrant/web/static/fonts/inter-tight.woff2") format("woff2"); font-weight: 500 600; }
+@font-face { font-family: "Geist Mono"; src: url("../../../src/mailgrant/web/static/fonts/geist-mono.woff2") format("woff2"); font-weight: 400 500; }
+:root { --bg: #05090b; --surface: #0b1114; --raised: #121a1e; --line: rgba(255,255,255,.07); --border: rgba(255,255,255,.12);
+  --text: #f7f8f8; --text-2: #b3bcc1; --muted: #87949b; --faint: #56646b; --accent: #38cfff; --warn: #f5b54a; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: "Inter", sans-serif; -webkit-font-smoothing: antialiased; }
+.word { font-family: "Inter Tight", sans-serif; font-weight: 500; letter-spacing: -0.035em; }
+.word i { font-style: normal; color: var(--accent); }
+.mono { font-family: "Geist Mono", monospace; }
+.phone { border-radius: 34px; border: 1px solid var(--border); overflow: hidden; background: var(--bg); box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+.phone img { display: block; width: 100%; }

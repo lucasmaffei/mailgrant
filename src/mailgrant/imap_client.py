@@ -436,6 +436,7 @@ def _serialize_message(
                 payload = part.get_payload(decode=True) or b""
                 attachments.append(
                     {
+                        "index": len(attachments),
                         "filename": _decode(part.get_filename() or ""),
                         "content_type": ctype,
                         "size": len(payload),
@@ -468,6 +469,7 @@ def _serialize_message(
         "subject": _decode(msg.get("Subject")),
         "date": _decode(msg.get("Date")),
         "message_id": _decode(msg.get("Message-ID")),
+        "references": _decode(msg.get("References")),
         "body_text": body_text,
         "body_html": body_html,
         "body_reader": body_reader,
@@ -591,3 +593,60 @@ def mark_seen(cfg: ImapConfig, uid: str, folder: str | None = None, seen: bool =
         typ, _ = conn.uid("STORE", uid, flag_op, r"(\Seen)")
         if typ != "OK":
             raise ImapError(f"STORE \\Seen failed for UID {uid}")
+
+
+def mailbox_status(cfg: ImapConfig, folder: str | None = None) -> dict[str, int]:
+    """UIDNEXT, UIDVALIDITY and UNSEEN of a folder, without selecting it.
+
+    One cheap round trip: this is what the new-mail watcher polls.
+    """
+    folder = folder or cfg.default_folder
+    with _connect(cfg) as conn:
+        typ, data = conn.status(_quote(folder), "(UIDNEXT UIDVALIDITY UNSEEN)")
+        if typ != "OK" or not data or not data[0]:
+            raise ImapError(f"STATUS failed for {folder!r}")
+        raw = data[0].decode("utf-8", "replace") if isinstance(data[0], bytes) else str(data[0])
+        out = {}
+        for key in ("UIDNEXT", "UIDVALIDITY", "UNSEEN"):
+            value = _extract(raw, key)
+            out[key.lower()] = int(value) if value.isdigit() else 0
+        return out
+
+
+def headers_since(
+    cfg: ImapConfig, first_uid: int, folder: str | None = None, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Headers of messages with UID >= first_uid, newest first."""
+    folder = folder or cfg.default_folder
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=True)
+        uids = [u for u in _uid_search(conn, f"UID {int(first_uid)}:*") if int(u) >= first_uid]
+        # `n:*` always matches the highest UID, even when it is below n.
+        return _fetch_headers(conn, uids, limit)
+
+
+def fetch_attachment(
+    cfg: ImapConfig, uid: str, index: int, folder: str | None = None
+) -> tuple[str, str, bytes]:
+    """(filename, content type, bytes) of the index-th attachment of a message."""
+    folder = folder or cfg.default_folder
+    _validate_uid(uid)
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=True)
+        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[])")
+        if typ != "OK" or not data or not isinstance(data[0], tuple):
+            raise ImapError(f"could not fetch UID {uid}")
+        raw = data[0][1]
+    msg = email.message_from_bytes(raw if isinstance(raw, bytes) else raw.encode())
+    seen = 0
+    for part in msg.walk():
+        if "attachment" not in (part.get("Content-Disposition") or "").lower():
+            continue
+        if seen == index:
+            payload = part.get_payload(decode=True)
+            blob = payload if isinstance(payload, bytes) else b""
+            return _decode(part.get_filename() or "anexo"), part.get_content_type(), blob
+        seen += 1
+    raise ImapError(f"attachment {index} not found in UID {uid}")

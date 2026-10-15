@@ -1,6 +1,6 @@
 [project]
 name = "mailgrant"
-version = "0.6.1"
+version = "0.7.0"
 description = "One email gateway for many AI agents: per-token mailboxes and scopes over MCP and REST."
 readme = "README.md"
 license = { text = "MIT" }
@@ -36,6 +36,8 @@ dependencies = [
     "mcp==1.28.1",
     "html2text==2024.2.26",
     "pyjwt==2.15.1",
+    "webauthn==3.0.1",
+    "pywebpush==2.5.0",
 ]
 
 [project.urls]

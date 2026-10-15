@@ -36,6 +36,10 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser("check", help="Validate the config and print the access matrix")
     p_check.add_argument("--config", help="Path to config.yaml (overrides MAILGRANT_CONFIG)")
 
+    p_invite = sub.add_parser("invite", help="Print a one-time link to register a web passkey")
+    p_invite.add_argument("--config", help="Path to config.yaml (overrides MAILGRANT_CONFIG)")
+    p_invite.add_argument("--minutes", type=int, default=30, help="How long the link works")
+
     args = parser.parse_args(argv)
 
     if getattr(args, "config", None):
@@ -46,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "check":
         return _check(args.config)
+
+    if args.mode == "invite":
+        return _invite(args.config, args.minutes)
 
     if args.mode == "http":
         import uvicorn
@@ -91,9 +98,41 @@ def _check(path: str | None) -> int:
         p = _principal_for_agent(cfg, i)
         boxes = "all mailboxes" if p.mailboxes is None else ", ".join(sorted(p.mailboxes))
         print(f"  {agent.name:<20} [{', '.join(sorted(p.scopes))}]  {boxes}")
+    if cfg.web is not None and cfg.web.enabled:
+        from .grants import web_principal
+
+        p = web_principal(cfg)
+        boxes = "all mailboxes" if p.mailboxes is None else ", ".join(sorted(p.mailboxes))
+        print(
+            f"web app: on at {cfg.web.origin}/app for {p.name} [{', '.join(sorted(p.scopes))}]"
+            f"  {boxes}; data in {cfg.web.data_dir}"
+        )
+    else:
+        print("web app: off (no `web:` section)")
     for m in cfg.mailboxes:
         if m.imap is not None and m.smtp is not None and not m.smtp.save_copy_to:
             print(f"note: {m.name}: sent mail is not copied to IMAP (smtp.save_copy_to unset)")
+    return 0
+
+
+def _invite(path: str | None, minutes: int) -> int:
+    from datetime import timedelta
+
+    from .config import ConfigError, load_config
+
+    try:
+        cfg = load_config(path)
+    except ConfigError as e:
+        print(f"invalid: {e}", file=sys.stderr)
+        return 1
+    if not cfg.web_enabled or cfg.web is None:
+        print("the web app is off: add a `web:` section to the config first", file=sys.stderr)
+        return 1
+    from .web.store import Store
+
+    token = Store(cfg.web.data_dir).create_invite(timedelta(minutes=max(1, minutes)))
+    print(f"Open on the device that will hold the passkey (valid {minutes} min, one use):")
+    print(f"  {cfg.web.origin}/app/#/invite/{token}")
     return 0
 
 

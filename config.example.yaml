@@ -47,6 +47,25 @@ agents:
 # auth:
 #   tokens: ["${ADMIN_TOKEN}"]
 
+# ── Web app (optional) ─────────────────────────────────────────────────────
+# A small installable app for the person who owns these mailboxes: unified
+# inbox, agent activity, push notifications, passkey sign-in. Leave this out
+# and mailgrant stays MCP/REST only, with no database. Guide: docs/web-app.md
+#
+# web:
+#   origin: https://mail.example.com      # public URL; passkeys are bound to it
+#   data_dir: /data                        # SQLite; must persist
+#   user:                                  # granted exactly like an agent
+#     name: owner
+#     mailboxes: ["*"]
+#     scopes: [read, mark, delete, send]
+#   # enabled: false                       # keep the section, turn the app off
+#   # poll_seconds: 60                     # new-mail check for push
+#   # session_days: 30
+#   # push_contact: mailto:you@example.com
+#
+# First sign-in: run `mailgrant invite` and open the link on your phone.
+
 # ── Mailboxes ──────────────────────────────────────────────────────────────
 # Each mailbox needs imap, smtp, or both. `name` is the handle used by the
 # REST paths and by the MCP `mailbox` argument (the address works too).

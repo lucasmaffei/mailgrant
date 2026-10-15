@@ -124,6 +124,52 @@ class AgentConfig(BaseModel):
         return self
 
 
+class WebUserConfig(BaseModel):
+    """The person who signs in to the web app, granted like an agent."""
+
+    name: str = "owner"
+    mailboxes: list[str] = Field(default_factory=lambda: [ALL_MAILBOXES], min_length=1)
+    scopes: list[Scope] = Field(
+        default_factory=lambda: list(ALL_SCOPES), min_length=1  # type: ignore[arg-type]
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        if not _NAME_RE.match(v):
+            raise ValueError(f"web user name {v!r} invalid: must match [a-zA-Z0-9_-]+")
+        return v
+
+
+class WebConfig(BaseModel):
+    """Optional web app (inbox, agent activity, push). Leave the section out to run MCP only."""
+
+    enabled: bool = True
+    # Public URL the app is served from. Passkeys are bound to its host, and
+    # requests from any other origin are refused.
+    origin: str
+    # SQLite lives here: passkeys, sessions, push subscriptions, audit history.
+    data_dir: str = "/data"
+    session_days: int = Field(30, ge=1, le=365)
+    # How often each mailbox is checked for new mail (one STATUS per mailbox).
+    poll_seconds: int = Field(60, ge=15, le=3600)
+    # Contact the push services may use (RFC 8292); defaults to the origin.
+    push_contact: str | None = None
+    user: WebUserConfig = Field(default_factory=WebUserConfig)
+
+    @field_validator("origin")
+    @classmethod
+    def _check_origin(cls, v: str) -> str:
+        v = v.rstrip("/")
+        local = v.startswith(("http://localhost", "http://127.0.0.1"))
+        if not (v.startswith("https://") or local) or v.count("/") != 2:
+            raise ValueError(
+                "web.origin must be https://host[:port] (http only for localhost): "
+                "passkeys and push need a secure origin"
+            )
+        return v
+
+
 class AuthConfig(BaseModel):
     """Legacy bearer tokens with full access. Prefer `agents` for anything new."""
 
@@ -145,6 +191,7 @@ class Config(BaseModel):
     audit_log: bool = True
     auth: AuthConfig = Field(default_factory=AuthConfig)
     agents: list[AgentConfig] = Field(default_factory=list)
+    web: WebConfig | None = None
     mailboxes: list[MailboxConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -174,10 +221,20 @@ class Config(BaseModel):
         digests += [a.token_sha256 for a in self.agents if a.token_sha256 is not None]
         if len(digests) != len(set(digests)):
             raise ValueError("the same token is configured more than once")
+        if self.web is not None:
+            if self.web.user.name in names:
+                raise ValueError(f"web user {self.web.user.name!r} has the same name as an agent")
+            for ref in self.web.user.mailboxes:
+                if ref != ALL_MAILBOXES and self.find(ref) is None:
+                    raise ValueError(f"web user references unknown mailbox {ref!r}")
         for m in self.mailboxes:
             if m.smtp is not None and m.smtp.save_copy_to and m.imap is None:
                 raise ValueError(f"mailbox {m.name!r}: smtp.save_copy_to needs imap configured")
         return self
+
+    @property
+    def web_enabled(self) -> bool:
+        return self.web is not None and self.web.enabled
 
     def get(self, name: str) -> MailboxConfig | None:
         for m in self.mailboxes:

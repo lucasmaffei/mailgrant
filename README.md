@@ -1,57 +1,55 @@
-<h1 align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png">
-  <img alt="mailgrant — one email gateway for many AI agents, each holding keys to its own mailboxes" src="docs/assets/hero-light.png" width="1280">
-</picture>
-</h1>
+<p align="center"><img alt="mailgrant — one email gateway for people and AI agents, each with its own mailboxes and permissions" src="docs/assets/hero.png" width="1280"></p>
 
 <p>
   <a href="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lucasmaffei/mailgrant/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-d4a63a">
-  <img alt="Docker image on GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-22364f?logo=docker&logoColor=white">
-  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-22364f?logo=python&logoColor=white">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22364f"></a>
+  <img alt="MCP: Streamable HTTP" src="https://img.shields.io/badge/MCP-Streamable%20HTTP-38cfff?labelColor=05090b">
+  <img alt="Web app: PWA with passkeys" src="https://img.shields.io/badge/web%20app-PWA%20%2B%20passkeys-38cfff?labelColor=05090b">
+  <img alt="Docker image on GHCR" src="https://img.shields.io/badge/docker-ghcr.io%2Flucasmaffei%2Fmailgrant-0b1114?logo=docker&logoColor=white&labelColor=05090b">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0b1114?labelColor=05090b"></a>
 </p>
 
-[Português](README.pt-BR.md) · [Deploy on Coolify](docs/deploy-coolify.md) · [Connect your agents](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
+[Português](README.pt-BR.md) · [Web app](docs/web-app.md) · [Deploy on Coolify](docs/deploy-coolify.md) · [Connect your agents](docs/connect-agents.md) · [Changelog](CHANGELOG.md)
 
-mailgrant sits between your agents and your IMAP/SMTP mailboxes. You register
-every mailbox **once**, then hand each agent a token that grants specific
-mailboxes and specific actions. Agents speak MCP (Streamable HTTP) or plain
-REST; mailgrant enforces the grant on every call and logs who did what.
+mailgrant sits between your IMAP/SMTP mailboxes and everyone who works with
+them. You register every mailbox **once**, then decide who gets which
+mailboxes and which actions:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.png">
-  <img alt="Agents with their own tokens and scopes go through mailgrant, which checks every call, hides mailboxes outside the grant, keeps the passwords and logs each operation" src="docs/assets/how-it-works-light.png" width="1280">
-</picture>
+- **Agents** get a bearer token and talk MCP (Streamable HTTP) or REST.
+- **You** get an optional web app: one inbox on your phone or computer, signed
+  in with a passkey, with push notifications and a timeline of what every
+  agent did.
+
+Every call from either side goes through the same grants and the same audit log.
+
+<p align="center"><img alt="Who uses it, the gateway, and your mailboxes" src="docs/assets/how-it-works.png" width="1280"></p>
 
 ## Why
 
 Agents multiply, and so do mailboxes. Without a gateway every agent holds its
 own copy of every password, on its own server, in its own harness. Adding a
 mailbox means visiting every agent; revoking access means hoping you found all
-the copies.
+the copies. And you still need somewhere to read the same mail yourself.
 
 With mailgrant:
 
-- **A new mailbox** is one entry in one file. Agents granted `"*"` see it right away; others get it with one more line.
+- **A new mailbox** is one entry in one file. Agents granted `"*"` see it right away.
 - **Revoking** an agent is deleting its token. Mailbox passwords never leave the gateway.
-- **Least privilege** is real: a read-only agent can't send, delete or even mark as read — and doesn't see those tools at all.
-- **You can audit it**: one JSON line per operation, allowed or denied.
+- **Least privilege is real**: a read-only agent can't send, delete or even mark as read, and doesn't see those tools at all.
+- **You see what they did**: every read, send and refusal, in the log and in the app.
 
 ## Features
 
-- **Per-agent grants** — mailboxes by name, address or `*`; scopes `read`, `mark`, `delete`, `send`.
-- **Invisible outside the grant** — a mailbox an agent can't use answers exactly like one that doesn't exist.
-- **Scoped tool list** — MCP `tools/list` only shows the tools a token may call.
-- **Unified inbox** — one call searches every granted mailbox in parallel, merged newest-first.
-- **Reader mode** — HTML bodies flattened to clean text for LLMs.
-- **Safe delete** — moves to the trash; erasing needs `permanent=true`, and only ever touches that one message.
-- **Threaded replies** — `in_reply_to` / `references` on send; optional copy of every sent message in the Sent folder.
-- **No spoofing** — `from_address` limited to the mailbox's own address and declared aliases.
-- **Audit log** — metadata only, never subjects or bodies.
-- **Stateless** — no database. Connections open per request and close.
-- **Secrets from the environment** — `${VAR}` anywhere in the config, or the whole config in `MAILGRANT_CONFIG_B64` (base64, one line) / `MAILGRANT_CONFIG_YAML`.
+- **Per-agent grants**: mailboxes by name, address or `*`; scopes `read`, `mark`, `delete`, `send`.
+- **Invisible outside the grant**: a mailbox an agent can't use answers exactly like one that doesn't exist.
+- **Scoped tool list**: MCP `tools/list` only shows the tools a token may call.
+- **Unified inbox**: one call searches every granted mailbox in parallel.
+- **Safe delete**: moves to the trash; erasing needs `permanent=true` and touches one message only.
+- **Threaded replies** with `in_reply_to`, and a copy of every sent message in the Sent folder.
+- **No spoofing**: `from_address` limited to the mailbox's own address and declared aliases.
+- **Audit log**: metadata only, never subjects or bodies.
+- **Optional web app**: installable PWA, passkey sign-in, push notifications, agent activity. Off unless configured.
+- **Stateless without the web app**: no database; connections open per request and close.
+- **Secrets from the environment**: `${VAR}` anywhere, or the whole config in `MAILGRANT_CONFIG_B64`.
 
 ## Use cases
 
@@ -67,6 +65,35 @@ With mailgrant:
 In every case, rotating a mailbox password, cutting an agent off or adding a
 new mailbox is a change to the gateway. No agent has to be touched.
 
+## The web app (optional)
+
+<p align="center"><img alt="Inbox, message, agents and settings on a phone" src="docs/assets/screens.png" width="1280"></p>
+
+A small app for the person who owns the mailboxes. It is **off by default**;
+add a `web:` section to turn it on:
+
+```yaml
+web:
+  origin: https://mail.example.com     # where you open it
+  data_dir: /data                       # SQLite for passkeys, push devices, history
+  user: {name: lucas, mailboxes: ["*"], scopes: [read, mark, delete, send]}
+```
+
+Then `mailgrant invite` prints a one-time link: open it on your phone, create
+the passkey, add the app to the Home Screen and turn notifications on.
+
+- **Turn it off** by removing the section or setting `enabled: false`. `/app`
+  disappears and nothing is polled; agents are not affected.
+- The person is granted like an agent, so a read-only phone is one line.
+- Mail bodies are shown as text, attachments always download, and a strict
+  CSP keeps every resource on your own origin.
+- The interface is in Brazilian Portuguese for now.
+
+<p align="center"><img alt="The web app on a computer" src="docs/assets/desktop.png" width="1100"></p>
+
+Full guide: **[docs/web-app.md](docs/web-app.md)** (install on iPhone,
+notifications, what is stored, security model, turning it off).
+
 ## Quick start
 
 ```bash
@@ -76,7 +103,8 @@ cp config.example.yaml config.yaml
 # 1. Mint a token per agent. Give the token to the agent; keep the hash.
 docker run --rm ghcr.io/lucasmaffei/mailgrant:latest mailgrant token --name support-bot
 
-# 2. Edit config.yaml: your mailboxes and the agents with their hashes.
+# 2. Edit config.yaml: your mailboxes, the agents with their hashes,
+#    and the `web:` section if you want the app.
 # 3. Validate it — prints who may touch what.
 docker run --rm -v "$PWD/config.yaml:/etc/mailgrant/config.yaml:ro" \
   ghcr.io/lucasmaffei/mailgrant:latest mailgrant check
@@ -85,9 +113,12 @@ docker run --rm -v "$PWD/config.yaml:/etc/mailgrant/config.yaml:ro" \
 docker compose up -d
 curl -s http://127.0.0.1:8000/health
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/whoami
+
+# 5. Web app only: a one-time link to create your passkey.
+docker compose exec mailgrant mailgrant invite
 ```
 
-No image registry access yet? `docker compose up -d --build` builds it from the checkout.
+No registry access yet? `docker compose up -d --build` builds from the checkout.
 
 ## Configuration
 
@@ -113,6 +144,11 @@ mailboxes:
       from_address: "Example <contact@example.com>"
       allowed_from: [sales@example.com]
       save_copy_to: Sent
+
+web:                                  # optional — see "The web app"
+  origin: https://mail.example.com
+  data_dir: /data
+  user: {name: owner, mailboxes: ["*"], scopes: [read, mark, delete, send]}
 ```
 
 [`config.example.yaml`](config.example.yaml) documents every option.
@@ -149,6 +185,18 @@ the Seen flag stays as the humans left it.
 | `smtp.from_address` | — | Required. Default `From:` |
 | `smtp.allowed_from` | `[]` | Other `From:` addresses callers may use |
 | `smtp.save_copy_to` | — | IMAP folder that receives a copy of each sent message (needs `imap`) |
+
+### Web app options
+
+| Key | Default | Notes |
+|---|---|---|
+| `web.enabled` | `true` | `false` keeps the section but turns the app off |
+| `web.origin` | — | Required. `https://host` (or `http://localhost` for tests) |
+| `web.data_dir` | `/data` | SQLite; must persist across restarts |
+| `web.user` | `owner`, `*`, all scopes | Granted like an agent |
+| `web.poll_seconds` | `60` | How often new mail is checked for push |
+| `web.session_days` | `30` | Sign-in lifetime on a device |
+| `web.push_contact` | origin | `mailto:` or `https:` contact for push services |
 
 ## Connecting agents
 
@@ -269,6 +317,7 @@ Subjects and bodies are never logged.
 - **Tokens are compared in constant time**, and every candidate is compared on every request.
 - **IMAP command injection** is blocked at the boundary: control characters in folder names are rejected, folder names are quoted, UIDs are digits only.
 - **Delete never erases by surprise**: trash first, `UID EXPUNGE` for exactly one message, refusal on servers without UIDPLUS.
+- **The web app** signs in with passkeys only, keeps sessions in `HttpOnly`/`SameSite=Strict` cookies, checks `Origin` on every change and serves a CSP that loads nothing from other origins. Details in [docs/web-app.md](docs/web-app.md#security-model).
 - **A token is only as narrow as its grant.** Give agents the fewest mailboxes and scopes that do the job; reserve `"*"` for agents you'd trust with all of them.
 
 ## Running from source
@@ -280,14 +329,17 @@ uv run mailgrant http --config config.yaml   # binds 127.0.0.1:8000
 uv run pytest -q
 ```
 
+The README art and screenshots are generated from [`docs/assets/src`](docs/assets/src).
+
 ## Credits
 
 mailgrant is a fork of [docker-mailbox](https://github.com/psyb0t/docker-mailbox)
 by Ciprian Mandache (psyb0t), which provides the IMAP/SMTP layer, the unified
 inbox, reader mode and the MCP transport. mailgrant adds per-agent grants,
-auditing, safe deletion and threaded sending.
+auditing, safe deletion, threaded sending and the web app.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The Docker image bundles `html2text` (GPL-3.0);
+MIT — see [LICENSE](LICENSE). The Docker image bundles third-party components
+under their own licenses (html2text is GPL-3.0; the web app's fonts are OFL);
 see [THIRD_PARTY.md](THIRD_PARTY.md).
