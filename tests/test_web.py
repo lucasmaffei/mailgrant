@@ -437,7 +437,12 @@ def test_prefs_and_push_subscription(
 ) -> None:
     sign_in(web_client, monkeypatch)
     prefs = web_client.get("/app/api/prefs").json()
-    assert prefs == {"notify": {"alpha": True, "beta": True}, "notify_agent_send": True}
+    assert prefs == {
+        "notify": {"alpha": True, "beta": True},
+        "notify_agent_send": True,
+        "threads": True,
+        "signatures": {"alpha": ""},
+    }
     prefs = web_client.put(
         "/app/api/prefs", headers=H, json={"notify": {"beta": False, "ghost": True}}
     ).json()
@@ -540,3 +545,153 @@ def test_store_survives_concurrent_first_start(tmp_path: Path) -> None:
         stores = list(ex.map(lambda _: Store(data), range(8)))
     stores[0].set_pref("x", 1)
     assert stores[-1].get_pref("x") == 1
+
+
+# ── organizing, conversations, drafts ───────────────────────────────────────
+
+
+def _msg(uid: str, mid: str, refs: str = "", flags: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "uid": uid,
+        "mailbox": "alpha",
+        "mailbox_address": "alpha@example.org",
+        "from": "Ana <ana@x.org>",
+        "subject": "Oi",
+        "date": f"Tue, 14 Oct 2026 {10 + int(uid) % 10:02d}:00:00 -0300",
+        "flags": flags or [],
+        "message_id": mid,
+        "in_reply_to": refs.split()[-1] if refs else "",
+        "references": refs,
+    }
+
+
+def test_inbox_groups_conversations(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    msgs = [
+        _msg("9", "<m9@x>", "<m7@x>", ["\\Seen", "\\Flagged"]),
+        _msg("8", "<m8@x>"),
+        _msg("7", "<m7@x>"),
+    ]
+    monkeypatch.setattr(
+        "mailgrant.web.api.imap_unified_search",
+        Mock(return_value={"messages": msgs, "errors": []}),
+    )
+    rows = web_client.get("/app/api/inbox").json()["messages"]
+    assert [(r["uid"], r["count"], r["members"], r["unread"], r["flagged"]) for r in rows] == [
+        ("9", 2, ["9", "7"], True, True),
+        ("8", 1, ["8"], True, False),
+    ]
+    web_client.put("/app/api/prefs", headers=H, json={"threads": False})
+    rows = web_client.get("/app/api/inbox").json()["messages"]
+    assert [r["uid"] for r in rows] == ["9", "8", "7"]
+
+
+def test_batch_actions_follow_scopes(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    move = Mock(return_value={"ok": True, "moved_to": "Archive", "count": 2})
+    flags = Mock()
+    monkeypatch.setattr("mailgrant.web.api.move_to", move)
+    monkeypatch.setattr("mailgrant.web.api.set_flags", flags)
+    items = [{"mailbox": "alpha", "uid": "7"}, {"mailbox": "alpha", "uid": "9"}]
+    r = web_client.post("/app/api/batch", headers=H, json={"action": "archive", "items": items})
+    assert r.status_code == 200 and r.json()["moved_to"] == {"alpha": "Archive"}
+    assert move.call_args.args[1:] == (["7", "9"], "archive")
+    # web.user has no delete scope: the trash is refused before any IMAP call.
+    move.reset_mock()
+    r = web_client.post("/app/api/batch", headers=H, json={"action": "trash", "items": items})
+    assert r.status_code == 403
+    move.assert_not_called()
+    r = web_client.post(
+        "/app/api/batch",
+        headers=H,
+        json={"action": "flag", "items": [{"mailbox": "beta", "uid": "3"}]},
+    )
+    assert r.status_code == 200
+    assert flags.call_args.args[1:] == (["3"], "flagged", True)
+    assert (
+        web_client.post(
+            "/app/api/batch", headers=H, json={"action": "explode", "items": items}
+        ).status_code
+        == 422
+    )
+
+
+def test_drafts_replace_the_old_version_and_go_when_sent(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    import email
+
+    sign_in(web_client, monkeypatch)
+    stored: list[bytes] = []
+    monkeypatch.setattr("mailgrant.web.api.special_folder", lambda cfg, kind: "Drafts")
+    monkeypatch.setattr(
+        "mailgrant.web.api.append_message",
+        lambda cfg, folder, raw, flags: stored.append(raw) or "55",
+    )
+    fetched = Mock(return_value=[("old.pdf", "application/pdf", b"%PDF")])
+    monkeypatch.setattr("mailgrant.web.api.fetch_attachments", fetched)
+    drop = Mock()
+    monkeypatch.setattr("mailgrant.web.api.delete_draft", drop)
+    body = {
+        "mailbox": "alpha",
+        "to": ["Ana <ana@x.org>"],
+        "bcc": ["hidden@x.org"],
+        "subject": "Proposta",
+        "body_text": "Segue.",
+        "attachments": [
+            {
+                "filename": "nota.txt",
+                "content_type": "text/plain",
+                "data": base64.b64encode(b"oi").decode(),
+            },
+            {"ref": {"mailbox": "alpha", "folder": "Drafts", "uid": "50", "index": 0}},
+        ],
+        "replace": {"mailbox": "alpha", "uid": "50"},
+    }
+    r = web_client.put("/app/api/drafts", headers=H, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["uid"] == "55"
+    assert [a["filename"] for a in r.json()["attachments"]] == ["nota.txt", "old.pdf"]
+    assert fetched.call_args.args[1:] == ("50", [0])
+    assert drop.call_args.args[1:] == ("50", "Drafts")
+    saved = email.message_from_bytes(stored[0])
+    assert saved["Bcc"] == "hidden@x.org"
+    assert [p.get_filename() for p in saved.walk() if p.get_filename()] == ["nota.txt", "old.pdf"]
+
+    send = Mock(return_value={"message_id": "<new@x>"})
+    monkeypatch.setattr("mailgrant.web.api.smtp_send", send)
+    drop.reset_mock()
+    r = web_client.post(
+        "/app/api/send",
+        headers=H,
+        json={**body, "replace": None, "draft": {"mailbox": "alpha", "uid": "55"}},
+    )
+    assert r.status_code == 200, r.text
+    assert send.call_args.kwargs["bcc"] == ["hidden@x.org"]
+    assert len(send.call_args.kwargs["attachments"]) == 2
+    assert drop.call_args.args[1:] == ("55", "Drafts")
+
+
+def test_attachments_are_checked(web_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import base64
+
+    sign_in(web_client, monkeypatch)
+    send = Mock(return_value={})
+    monkeypatch.setattr("mailgrant.web.api.smtp_send", send)
+    base = {"mailbox": "alpha", "to": ["a@x.org"], "subject": "s", "body_text": "b"}
+    ghost = [{"ref": {"mailbox": "ghost", "uid": "1", "index": 0}}]
+    r = web_client.post("/app/api/send", headers=H, json={**base, "attachments": ghost})
+    assert r.status_code == 404
+    junk = [{"filename": "a", "data": "%%%"}]
+    r = web_client.post("/app/api/send", headers=H, json={**base, "attachments": junk})
+    assert r.status_code == 422
+    monkeypatch.setattr("mailgrant.web.api.MAX_ATTACHMENT_BYTES", 10)
+    big = [{"filename": "a", "data": base64.b64encode(b"x" * 11).decode()}]
+    r = web_client.post("/app/api/send", headers=H, json={**base, "attachments": big})
+    assert r.status_code == 413
+    send.assert_not_called()

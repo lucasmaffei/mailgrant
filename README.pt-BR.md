@@ -91,6 +91,9 @@ Aí adicione o app à Tela de Início e ligue as notificações.
 - **Para desligar**, tire a seção ou escreva `enabled: false`. O `/app` some e
   nada é vigiado; os agentes não são afetados.
 - Você recebe permissão como um agente, então um celular só de leitura é uma linha.
+- É um cliente de e-mail de verdade: conversas, responder a todos, encaminhar,
+  Cc/Cco, anexos, rascunhos salvos na pasta Rascunhos da caixa, assinaturas,
+  estrela, arquivar, ações em lote e gestos de deslizar no celular.
 - O corpo dos e-mails aparece como texto, anexos sempre baixam, e uma CSP
   rígida mantém tudo na sua própria origem.
 

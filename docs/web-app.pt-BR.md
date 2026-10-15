@@ -18,10 +18,17 @@ nenhum banco, nenhuma dependência extra carregada.
 
 | Tela | O que faz |
 |---|---|
-| Entrada | Todas as caixas que você pode ver, das mais novas para as mais antigas, com filtro por caixa e busca. Cada mensagem mostra qual agente já leu ou respondeu. |
-| Mensagem | O corpo em texto limpo (o HTML é convertido, nunca interpretado), anexos para baixar, os agentes que mexeram nela. A resposta entra na mesma conversa e fica em Enviados. |
+| Entrada | Todas as caixas que você pode ver, das mais novas para as mais antigas, agrupadas por conversa, com filtro por caixa, busca e "carregar mais antigas". Cada linha mostra qual agente já leu ou respondeu. Também **Com estrela** e **Rascunhos**. |
+| Conversa | Todas as mensagens da conversa, inclusive o que você enviou (vindo de Enviados), da mais antiga para a mais nova; as antigas ficam recolhidas numa linha. O corpo em texto limpo (o HTML é convertido, nunca interpretado), anexos para baixar, os agentes que mexeram nela. |
+| Escrever | Responder, responder a todos, encaminhar (com os anexos), Cc e Cco, anexar arquivos do celular, uma assinatura por caixa. Respostas entram na mesma conversa e ficam em Enviados. |
+| Rascunhos | O que você escreve é salvo na pasta Rascunhos da própria caixa alguns segundos depois que você para de digitar, então aparece também em outros apps de e-mail. Fechar o editor guarda o rascunho; abrir e fechar sem escrever não deixa nada. |
 | Agentes | A auditoria como linha do tempo: leituras, envios, idas para a lixeira e cada recusa, com filtro por envios ou por barrados. |
 | Ajustes | Ligar notificações, escolher quais caixas notificam, receber push quando um agente enviar e-mail, gerenciar passkeys, ver o acesso de cada agente. |
+
+Organizar funciona em uma mensagem ou em várias: estrela, lida/não lida,
+**arquivar** e lixeira. No celular, deslize a linha para a direita para marcar
+como lida ou não lida, para a esquerda para arquivar, e segure para selecionar
+várias; no computador, **Selecionar** acima da lista.
 
 No computador vira três colunas: caixas, lista e mensagem.
 
@@ -155,6 +162,13 @@ Os e-mails continuam nos seus servidores IMAP.
   `web.user`; toda ação passa pelas mesmas checagens e pela mesma auditoria.
 - **E-mail é texto.** O corpo aparece como texto (com links clicáveis), o HTML
   nunca é interpretado, anexos sempre baixam.
+- **Nada é apagado de surpresa.** Lixeira e arquivo são movimentações. A única
+  exclusão definitiva é a de um rascunho substituído: salvar um rascunho grava
+  uma versão nova e apaga a anterior, e o servidor recusa isso para qualquer
+  mensagem sem a marca `\Draft`.
+- **Permissões das ações novas.** Estrela, lida/não lida e arquivar pedem
+  `mark`; a lixeira pede `delete`; rascunhos pedem `send`. Encaminhar um anexo
+  pede `read` na caixa de onde ele vem. Os anexos vão até 25 MB por mensagem.
 - **CSP rígida**: nada é carregado de outra origem (as fontes vêm junto), sem
   script ou estilo inline, sem iframes.
 - O token de um agente não abre o app web, e a sessão do app não abre a API

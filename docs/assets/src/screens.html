@@ -11,10 +11,10 @@ figcaption b { display: block; color: var(--text); font-weight: 500; margin-bott
 <script>
 const pt = new URLSearchParams(location.search).get('lang') === 'pt-BR';
 const items = [
-  ['02-entrada.png', pt ? ['Uma caixa de entrada', 'Todas as caixas juntas, com o que cada agente já fez.'] : ['One inbox', 'Every mailbox together, with what each agent already did.']],
-  ['03-mensagem.png', pt ? ['Leitura limpa', 'HTML vira texto. Responder entra na mesma conversa.'] : ['Clean reading', 'HTML becomes text. Replies stay in the thread.']],
+  ['02-entrada.png', pt ? ['Uma caixa de entrada', 'Todas as caixas, por conversa, com o que cada agente já fez.'] : ['One inbox', 'Every mailbox by conversation, with what each agent already did.']],
+  ['03-mensagem.png', pt ? ['A conversa inteira', 'Inclusive o que você enviou. HTML vira texto.'] : ['The whole conversation', 'Including what you sent. HTML becomes text.']],
+  ['04-resposta.png', pt ? ['Escrever de verdade', 'Responder a todos, encaminhar, anexos e rascunhos.'] : ['Real writing', 'Reply all, forward, attachments and drafts.']],
   ['05-agentes.png', pt ? ['Agentes', 'Quem leu, enviou ou foi barrado, e quando.'] : ['Agents', 'Who read, sent or got denied, and when.']],
-  ['06-ajustes.png', pt ? ['Push e passkeys', 'Escolha as caixas que notificam. Sem senha.'] : ['Push and passkeys', 'Pick the mailboxes that notify. No password.']],
 ];
 document.getElementById('row').innerHTML = items.map(([img, [t, d]]) =>
   `<figure><div class="phone"><img src="shots/${img}" alt=""></div><figcaption><b>${t}</b>${d}</figcaption></figure>`).join('');

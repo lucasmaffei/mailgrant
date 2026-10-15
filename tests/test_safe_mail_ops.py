@@ -161,3 +161,80 @@ def test_failed_copy_is_reported_not_raised(monkeypatch: pytest.MonkeyPatch) -> 
     )
     result = smtp_client.send(smtp, to=["a@x"], subject="s", body_text="b", copy_to=(IMAP, "Sent"))
     assert result["copy_error"] == "APPEND failed"
+
+
+def test_envelope_uses_bare_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    server = MagicMock()
+    server.__enter__.return_value.send_message.side_effect = lambda msg, to_addrs: calls.append(
+        to_addrs
+    )
+    monkeypatch.setattr(smtp_client.smtplib, "SMTP_SSL", lambda *a, **k: server)
+    smtp = SmtpConfig(
+        host="h", port=465, tls="ssl", username="u", password="p", from_address="u@example.org"
+    )
+    smtp_client.send(
+        smtp,
+        to=["Mariana Duarte <m@example.com>"],
+        cc=["Recepção <r@example.com>"],
+        bcc=["b@example.com"],
+        subject="s",
+        body_text="b",
+        attachments=[("a.pdf", "application/pdf", b"%PDF")],
+    )
+    assert calls == [["m@example.com", "r@example.com", "b@example.com"]]
+
+
+@pytest.mark.parametrize("uids", [["1:*"], ["3,4"], []])
+def test_batches_still_refuse_ranges(uids: list[str]) -> None:
+    with pytest.raises(ImapError):
+        imap_client.set_flags(IMAP, uids, "seen", True)
+
+
+class DraftConn(FakeConn):
+    def __init__(self, flags: bytes) -> None:
+        super().__init__("IMAP4rev1 UIDPLUS", FOLDERS)
+        self._flags = flags
+        self.created: list[str] = []
+
+    def uid(self, command: str, *args: Any) -> tuple[str, list[bytes]]:
+        self.calls.append((command, *args))
+        if command == "FETCH":
+            return "OK", [b"1 (UID 5 FLAGS (" + self._flags + b"))"]
+        return "OK", [b""]
+
+    def create(self, name: str) -> tuple[str, list[bytes]]:
+        self.created.append(name)
+        return "OK", [b""]
+
+    def subscribe(self, name: str) -> tuple[str, list[bytes]]:
+        return "OK", [b""]
+
+
+def test_delete_draft_only_erases_drafts(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = DraftConn(b"\\Seen")
+    _patch(monkeypatch, conn)
+    with pytest.raises(ImapError, match="not a draft"):
+        imap_client.delete_draft(IMAP, "5", "Drafts")
+    assert not any(c[0] in ("STORE", "EXPUNGE") for c in conn.calls)
+    conn = DraftConn(b"\\Seen \\Draft")
+    _patch(monkeypatch, conn)
+    imap_client.delete_draft(IMAP, "5", "Drafts")
+    assert ("EXPUNGE", "5") in conn.calls
+
+
+def test_archive_creates_the_folder_and_moves_the_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = DraftConn(b"")
+    conn._caps = "IMAP4rev1 MOVE UIDPLUS"
+    _patch(monkeypatch, conn)
+    result = imap_client.move_to(IMAP, ["7", "9", "7"], "archive")
+    assert conn.created == ['"Archive"']
+    assert result == {"ok": True, "moved_to": "Archive", "count": 2}
+    assert ("MOVE", "7,9", '"Archive"') in conn.calls
+
+
+def test_thread_search_covers_every_id() -> None:
+    crit = imap_client._thread_criteria(["<a@x>", "<b@y>"])
+    assert crit.count("OR") == 5
+    assert crit.count('"<a@x>"') == 3 and crit.count('"<b@y>"') == 3
+    assert imap_client.message_ids("<a@x> <b@y>", "<a@x>", None) == ["<a@x>", "<b@y>"]

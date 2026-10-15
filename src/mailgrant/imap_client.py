@@ -163,19 +163,38 @@ def _quote(folder: str) -> str:
     return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _find_trash(conn: imaplib.IMAP4, cfg: ImapConfig) -> str | None:
-    """The configured trash folder, else the one flagged \\Trash, else one named Trash."""
+# Fallback names when the server doesn't flag its special folders (RFC 6154).
+_SPECIAL_NAMES = {
+    "trash": ("Trash", "INBOX.Trash", "Deleted Items", "Lixeira"),
+    "archive": ("Archive", "INBOX.Archive", "Archives", "Arquivo"),
+    "drafts": ("Drafts", "INBOX.Drafts", "Rascunhos"),
+    "sent": ("Sent", "INBOX.Sent", "Sent Items", "Sent Messages", "Enviados"),
+}
+
+
+def _find_special(conn: imaplib.IMAP4, kind: str, configured: str | None = None) -> str | None:
+    """The configured folder, else the one flagged \\<Kind>, else a well-known name."""
     folders = _list(conn)
     names = {name for name, _ in folders}
-    if cfg.trash_folder:
-        return cfg.trash_folder if cfg.trash_folder in names else None
+    if configured:
+        return configured if configured in names else None
     for name, flags in folders:
-        if "\\trash" in flags:
+        if f"\\{kind}" in flags:
             return name
-    for candidate in ("Trash", "INBOX.Trash", "Deleted Items", "Lixeira"):
+    for candidate in _SPECIAL_NAMES[kind]:
         if candidate in names:
             return candidate
     return None
+
+
+def _find_trash(conn: imaplib.IMAP4, cfg: ImapConfig) -> str | None:
+    return _find_special(conn, "trash", cfg.trash_folder)
+
+
+def special_folder(cfg: ImapConfig, kind: str) -> str | None:
+    """Name of the mailbox's trash, archive, drafts or sent folder, if it has one."""
+    with _connect(cfg) as conn:
+        return _find_special(conn, kind, cfg.trash_folder if kind == "trash" else None)
 
 
 def _has_capability(conn: imaplib.IMAP4, cap: str) -> bool:
@@ -194,7 +213,7 @@ def _has_capability(conn: imaplib.IMAP4, cap: str) -> bool:
 
 
 def _expunge_uid(conn: imaplib.IMAP4, uid: str) -> None:
-    """Remove exactly one \\Deleted message.
+    """Remove exactly these \\Deleted messages (one UID, or a set from `_uid_set`).
 
     A bare EXPUNGE would also remove every other message flagged \\Deleted in
     the folder — including ones a human marked in their own mail client.
@@ -341,7 +360,8 @@ def _fetch_headers(conn: imaplib.IMAP4, uids: list[bytes], limit: int) -> list[d
     typ, fdata = conn.uid(
         "FETCH",
         uid_set,
-        "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)] FLAGS RFC822.SIZE)",
+        "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)]"
+        " FLAGS RFC822.SIZE)",
     )
     if typ != "OK":
         raise ImapError("FETCH headers failed")
@@ -375,6 +395,8 @@ def _parse_header_fetch(fdata: list[Any]) -> list[dict[str, Any]]:
                 "subject": _decode(msg.get("Subject")),
                 "date": _decode(msg.get("Date")),
                 "message_id": _decode(msg.get("Message-ID")),
+                "in_reply_to": _decode(msg.get("In-Reply-To")),
+                "references": _decode(msg.get("References")),
             }
         )
     return out
@@ -466,10 +488,13 @@ def _serialize_message(
         "from": _decode(msg.get("From")),
         "to": _decode(msg.get("To")),
         "cc": _decode(msg.get("Cc")),
+        "bcc": _decode(msg.get("Bcc")),
+        "reply_to": _decode(msg.get("Reply-To")),
         "subject": _decode(msg.get("Subject")),
         "date": _decode(msg.get("Date")),
         "message_id": _decode(msg.get("Message-ID")),
         "references": _decode(msg.get("References")),
+        "in_reply_to": _decode(msg.get("In-Reply-To")),
         "body_text": body_text,
         "body_html": body_html,
         "body_reader": body_reader,
@@ -523,15 +548,26 @@ def delete_message(
         return {"ok": True, "moved_to": trash} if trash else {"ok": True, "erased": True}
 
 
-def append_message(cfg: ImapConfig, folder: str, raw: bytes) -> None:
-    """Store a copy of an outgoing message (already read: flagged \\Seen)."""
+_APPENDUID_RE = re.compile(rb"APPENDUID \d+ (\d+)")
+
+
+def append_message(cfg: ImapConfig, folder: str, raw: bytes, flags: str = r"(\Seen)") -> str | None:
+    """Store a message (by default already read: a copy of an outgoing one).
+
+    Returns its UID when the server reports it (UIDPLUS), else None.
+    """
     with _connect(cfg) as conn:
         # typeshed declares append() as returning str; it returns (typ, data).
         response: Any = conn.append(
-            _quote(folder), r"(\Seen)", imaplib.Time2Internaldate(time.time()), raw
+            _quote(folder), flags, imaplib.Time2Internaldate(time.time()), raw
         )
         if response[0] != "OK":
             raise ImapError(f"APPEND to {folder!r} failed")
+        for item in response[1] or []:
+            m = _APPENDUID_RE.search(item if isinstance(item, bytes) else str(item).encode())
+            if m:
+                return m.group(1).decode()
+        return None
 
 
 def unified_search(
@@ -650,3 +686,238 @@ def fetch_attachment(
             return _decode(part.get_filename() or "anexo"), part.get_content_type(), blob
         seen += 1
     raise ImapError(f"attachment {index} not found in UID {uid}")
+
+
+# ── organizing: flags, moves, drafts, conversations ───────────────────────
+
+
+def _uid_set(uids: list[str]) -> str:
+    """A comma list of validated single UIDs. Ranges stay refused."""
+    if not uids:
+        raise ImapError("no messages given")
+    if len(uids) > 500:
+        raise ImapError("too many messages at once (500 max)")
+    for uid in uids:
+        _validate_uid(uid)
+    return ",".join(dict.fromkeys(uids))
+
+
+_FLAGS = {"seen": r"\Seen", "flagged": r"\Flagged"}
+
+
+def set_flags(
+    cfg: ImapConfig, uids: list[str], flag: str, on: bool, folder: str | None = None
+) -> None:
+    """Add or remove \\Seen or \\Flagged on several messages of one folder."""
+    if flag not in _FLAGS:
+        raise ImapError(f"unknown flag {flag!r}")
+    folder = folder or cfg.default_folder
+    uid_set = _uid_set(uids)
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=False)
+        typ, _ = conn.uid("STORE", uid_set, "+FLAGS" if on else "-FLAGS", f"({_FLAGS[flag]})")
+        if typ != "OK":
+            raise ImapError(f"STORE {_FLAGS[flag]} failed")
+
+
+def _move(conn: imaplib.IMAP4, uid_set: str, dest: str) -> None:
+    if _has_capability(conn, "MOVE"):
+        typ, _ = conn.uid("MOVE", uid_set, _quote(dest))
+        if typ != "OK":
+            raise ImapError(f"UID MOVE to {dest!r} failed")
+        return
+    typ, _ = conn.uid("COPY", uid_set, _quote(dest))
+    if typ != "OK":
+        raise ImapError(f"UID COPY to {dest!r} failed")
+    typ, _ = conn.uid("STORE", uid_set, "+FLAGS", r"(\Deleted)")
+    if typ != "OK":
+        raise ImapError("STORE \\Deleted failed")
+    _expunge_uid(conn, uid_set)
+
+
+def move_to(
+    cfg: ImapConfig, uids: list[str], kind: str, folder: str | None = None
+) -> dict[str, Any]:
+    """Move messages to the trash or the archive. Nothing is erased.
+
+    A mailbox without an archive folder gets one named "Archive", the name
+    most mail apps look for.
+    """
+    if kind not in ("trash", "archive"):
+        raise ImapError(f"cannot move to {kind!r}")
+    folder = folder or cfg.default_folder
+    uid_set = _uid_set(uids)
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        dest = _find_special(conn, kind, cfg.trash_folder if kind == "trash" else None)
+        if dest is None and kind == "archive":
+            dest = "Archive"
+            typ, _ = conn.create(_quote(dest))
+            if typ != "OK":
+                raise ImapError("could not create the Archive folder")
+            conn.subscribe(_quote(dest))
+        if dest is None:
+            raise ImapError("this mailbox has no trash folder")
+        if dest == folder:
+            raise ImapError(f"the messages are already in {dest!r}")
+        _select(conn, folder, readonly=False)
+        _move(conn, uid_set, dest)
+    return {"ok": True, "moved_to": dest, "count": len(uid_set.split(","))}
+
+
+def delete_draft(cfg: ImapConfig, uid: str, folder: str) -> None:
+    """Erase one superseded or discarded draft — and only a draft.
+
+    Saving a draft appends a new version and erases the old one, so this is
+    the one permanent delete the web app does on its own. It refuses any
+    message not flagged \\Draft.
+    """
+    _validate_uid(uid)
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=False)
+        typ, data = conn.uid("FETCH", uid, "(FLAGS)")
+        meta = b" ".join(d if isinstance(d, bytes) else b"" for d in data or [])
+        if typ != "OK" or b"\\Draft" not in meta:
+            raise ImapError(f"UID {uid} in {folder!r} is not a draft")
+        typ, _ = conn.uid("STORE", uid, "+FLAGS", r"(\Deleted)")
+        if typ != "OK":
+            raise ImapError(f"STORE \\Deleted failed for UID {uid}")
+        _expunge_uid(conn, uid)
+
+
+_MSGID_RE = re.compile(r"<[^<>\s]+>")
+
+
+def message_ids(*values: str | None) -> list[str]:
+    """Every <message-id> in the given header values, in order, once."""
+    out: dict[str, None] = {}
+    for v in values:
+        for m in _MSGID_RE.findall(v or ""):
+            out[m] = None
+    return list(out)
+
+
+def _thread_criteria(ids: list[str]) -> list[str]:
+    keys: list[list[str]] = []
+    for mid in ids:
+        _reject_control_chars(mid, "message id")
+        quoted = '"' + mid.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        for field in ("Message-ID", "In-Reply-To", "References"):
+            keys.append(["HEADER", field, quoted])
+    out = keys[-1]
+    for key in reversed(keys[:-1]):
+        out = ["OR", *key, *out]
+    return out
+
+
+def _fetch_full(conn: imaplib.IMAP4, uid_set: str) -> list[tuple[str, list[str], bytes]]:
+    """(uid, flags, raw) per message, without setting \\Seen."""
+    typ, data = conn.uid("FETCH", uid_set, "(UID FLAGS BODY.PEEK[])")
+    if typ != "OK":
+        raise ImapError("FETCH failed")
+    out: list[tuple[str, list[str], bytes]] = []
+    items = list(data or [])
+    for i, item in enumerate(items):
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        meta = item[0].decode("utf-8", "replace") if isinstance(item[0], bytes) else str(item[0])
+        # Some servers send FLAGS after the literal, in the trailing chunk.
+        tail = items[i + 1] if i + 1 < len(items) and isinstance(items[i + 1], bytes) else b""
+        flags = _extract_flags(meta) or _extract_flags(tail.decode("utf-8", "replace"))
+        raw = item[1] if isinstance(item[1], bytes) else str(item[1]).encode()
+        out.append((_extract(meta, "UID"), flags, raw))
+    return out
+
+
+def fetch_thread(
+    cfg: ImapConfig,
+    uid: str,
+    folder: str | None = None,
+    sent_folder: str | None = None,
+    limit: int = 30,
+    related: bool = True,
+) -> list[dict[str, Any]]:
+    """A message and the rest of its conversation, oldest first.
+
+    Looks in the message's folder and in Sent for anything sharing a
+    Message-ID, In-Reply-To or References id with it. Each entry carries its
+    `folder`, `flags` and the reader body. Nothing is marked read.
+    """
+    folder = folder or cfg.default_folder
+    _validate_uid(uid)
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=True)
+        first = _fetch_full(conn, uid)
+        if not first:
+            raise ImapError(f"could not fetch UID {uid}")
+        root = email.message_from_bytes(first[0][2])
+        ids = message_ids(
+            _decode(root.get("References")),
+            _decode(root.get("In-Reply-To")),
+            _decode(root.get("Message-ID")),
+        )[-12:]
+        found: dict[tuple[str, str], tuple[list[str], bytes]] = {
+            (folder, uid): (first[0][1], first[0][2])
+        }
+        if ids and related:
+            sent = _find_special(conn, "sent", sent_folder)
+            for f in dict.fromkeys([folder] + ([sent] if sent else [])):
+                _select(conn, f, readonly=True)
+                uids = [u.decode() for u in _uid_search(conn, _thread_criteria(ids))][-limit:]
+                uids = [u for u in uids if (f, u) not in found]
+                if uids:
+                    for u, flags, raw in _fetch_full(conn, ",".join(uids)):
+                        found[(f, u)] = (flags, raw)
+    out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    # The original folder first, so a copy of the same message in Sent is dropped.
+    for (f, u), (flags, raw) in sorted(found.items(), key=lambda kv: kv[0][0] != folder):
+        msg = email.message_from_bytes(raw)
+        entry = _serialize_message(msg, uid=u, reader=True)
+        mid = entry.get("message_id") or ""
+        if mid and mid in seen_ids:
+            continue
+        seen_ids.add(mid)
+        entry["folder"] = f
+        entry["flags"] = flags
+        out.append(entry)
+
+    def _ts(m: dict[str, Any]) -> float:
+        try:
+            return parsedate_to_datetime(m.get("date") or "").timestamp()
+        except (TypeError, ValueError):
+            return 0.0
+
+    out.sort(key=_ts)
+    return out[-limit:]
+
+
+def fetch_attachments(
+    cfg: ImapConfig, uid: str, indexes: list[int], folder: str | None = None
+) -> list[tuple[str, str, bytes]]:
+    """Several attachments of one message, in the order asked."""
+    folder = folder or cfg.default_folder
+    _validate_uid(uid)
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=True)
+        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[])")
+        if typ != "OK" or not data or not isinstance(data[0], tuple):
+            raise ImapError(f"could not fetch UID {uid}")
+        raw = data[0][1]
+    msg = email.message_from_bytes(raw if isinstance(raw, bytes) else raw.encode())
+    parts = [p for p in msg.walk() if "attachment" in (p.get("Content-Disposition") or "").lower()]
+    out: list[tuple[str, str, bytes]] = []
+    for i in indexes:
+        if not 0 <= i < len(parts):
+            raise ImapError(f"attachment {i} not found in UID {uid}")
+        payload = parts[i].get_payload(decode=True)
+        out.append(
+            (
+                _decode(parts[i].get_filename() or "anexo"),
+                parts[i].get_content_type(),
+                payload if isinstance(payload, bytes) else b"",
+            )
+        )
+    return out

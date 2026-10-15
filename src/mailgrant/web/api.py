@@ -8,13 +8,17 @@ changing requests also need the X-Mailgrant header and a matching Origin.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
+import logging
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -39,21 +43,39 @@ from ..config import Config, ImapConfig, MailboxConfig
 from ..grants import Forbidden, NotFound, Principal, check_sender
 from ..grants import resolve as grant_resolve
 from ..grants import select_imap, web_principal
-from ..imap_client import ImapError
+from ..imap_client import ImapError, append_message, delete_draft
 from ..imap_client import delete_message as imap_delete
 from ..imap_client import fetch_attachment as imap_attachment
+from ..imap_client import fetch_attachments
 from ..imap_client import fetch_message as imap_fetch
-from ..imap_client import mailbox_status
+from ..imap_client import fetch_thread, list_messages, mailbox_status
 from ..imap_client import mark_seen as imap_mark_seen
+from ..imap_client import message_ids, move_to, set_flags, special_folder
 from ..imap_client import unified_search as imap_unified_search
-from ..smtp_client import SmtpError
+from ..smtp_client import SmtpError, build_message
 from ..smtp_client import send as smtp_send
 from .push import Pusher
 from .store import Store, now
 
 SESSION_COOKIE = "mg_session"
 CSRF_HEADER = "x-mailgrant"
+log = logging.getLogger(__name__)
+
 INVITE_TTL = timedelta(minutes=30)
+# What one message may carry in attachments, uploaded or forwarded.
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_SIGNATURE = 2000
+# action -> (scope, audit action). Archiving only moves mail, so it is "mark";
+# the trash stays behind "delete", as for agents.
+BATCH_ACTIONS = {
+    "seen": ("mark", "mark_seen"),
+    "unseen": ("mark", "mark_seen"),
+    "flag": ("mark", "flag"),
+    "unflag": ("mark", "flag"),
+    "archive": ("mark", "archive"),
+    "trash": ("delete", "delete_message"),
+}
+_CTYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 # Stands in for an invite hash on a challenge started with web.setup_code.
 SETUP_MARK = "setup-code"
 MARK_WINDOW = timedelta(days=60)
@@ -118,6 +140,87 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
 
     def address(mb: MailboxConfig) -> str:
         return mb.imap.username if mb.imap else mb.smtp.username if mb.smtp else mb.name
+
+    special_cache: dict[tuple[str, str], str] = {}
+
+    def special(mb: MailboxConfig, kind: str) -> str | None:
+        """Drafts/Sent folder of a mailbox, looked up once per process."""
+        key = (mb.name, kind)
+        if key not in special_cache:
+            if kind == "sent" and mb.smtp is not None and mb.smtp.save_copy_to:
+                found: str | None = mb.smtp.save_copy_to
+            else:
+                found = special_folder(imap_of(mb), kind)
+            if found is None:
+                return None  # not cached: the folder may be created later
+            special_cache[key] = found
+        return special_cache[key]
+
+    def addrs(body: dict, key: str) -> list[str]:
+        value = body.get(key) or []
+        if isinstance(value, str):
+            value = [value]
+        out = [str(x).strip() for x in value if str(x).strip()]
+        if len(out) > 100:
+            raise HTTPException(422, f"too many addresses in {key}")
+        if any(ch in a for a in out for ch in "\r\n"):
+            raise HTTPException(422, f"invalid address in {key}")
+        return out
+
+    def resolve_attachments(who: Principal, items: Any) -> list[tuple[str, str, bytes]]:
+        """Uploaded files ({filename, content_type, data}) and attachments of
+        mail the person can read ({ref: {mailbox, folder, uid, index}}), in order."""
+        if not items:
+            return []
+        if not isinstance(items, list) or len(items) > 50:
+            raise HTTPException(422, "attachments must be a list of up to 50")
+        slots: list[tuple[str, str, bytes] | None] = [None] * len(items)
+        refs: dict[tuple[str, str | None, str], list[tuple[int, int]]] = {}
+        for pos, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise HTTPException(422, "invalid attachment")
+            if item.get("data") is not None:
+                try:
+                    data = base64.b64decode(str(item["data"]), validate=True)
+                except (binascii.Error, ValueError) as e:
+                    raise HTTPException(422, "attachment data is not base64") from e
+                ctype = str(item.get("content_type") or "")
+                name = "".join(
+                    ch
+                    for ch in str(item.get("filename") or "")
+                    if ch.isprintable() and ch not in '/\\"'
+                )
+                slots[pos] = (
+                    name.strip()[:200] or "anexo",
+                    ctype if _CTYPE_RE.match(ctype) else "application/octet-stream",
+                    data,
+                )
+                continue
+            ref = item.get("ref")
+            if not isinstance(ref, dict):
+                raise HTTPException(422, "invalid attachment")
+            try:
+                index = int(ref.get("index"))
+            except (TypeError, ValueError) as e:
+                raise HTTPException(422, "invalid attachment index") from e
+            key = (
+                str(ref.get("mailbox") or ""),
+                ref.get("folder") or None,
+                str(ref.get("uid") or ""),
+            )
+            refs.setdefault(key, []).append((pos, index))
+        for (name, folder, uid), wanted in refs.items():
+            mb = mailbox(who, name, "read", "get_attachment", uid=uid)
+            try:
+                got = fetch_attachments(imap_of(mb), uid, [i for _, i in wanted], folder=folder)
+            except ImapError as e:
+                raise HTTPException(404, f"attachment not found: {e}") from e
+            for (pos, _), att in zip(wanted, got):
+                slots[pos] = att
+        done = [a for a in slots if a is not None]
+        if sum(len(a[2]) for a in done) > MAX_ATTACHMENT_BYTES:
+            raise HTTPException(413, "attachments are over 25 MB")
+        return done
 
     # ── session & passkeys ────────────────────────────────────────────────
 
@@ -320,9 +423,51 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             "date": m.get("date"),
             "ts": ts,
             "unread": "\\Seen" not in (m.get("flags") or []),
+            "flagged": "\\Flagged" in (m.get("flags") or []),
             "message_id": m.get("message_id"),
             "mark": mark,
+            "count": 1,
+            "members": [str(m.get("uid"))],
         }
+
+    def threaded(msgs: list[dict[str, Any]], read, replied) -> list[dict[str, Any]]:
+        """One row per conversation, newest first.
+
+        Messages are linked when they share any Message-ID, In-Reply-To or
+        References id (union-find), so a reply that only names its parent still
+        lands with the rest. Conversations never span mailboxes.
+        """
+        parent: dict[str, str] = {}
+
+        def find(x: str) -> str:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        nodes = []
+        for m in msgs:
+            box = m.get("mailbox") or ""
+            own = f"{box}|uid:{m.get('uid')}"
+            find(own)
+            for mid in message_ids(m.get("message_id"), m.get("in_reply_to"), m.get("references")):
+                parent[find(own)] = find(f"{box}|{mid}")
+            nodes.append(own)
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for m, own in zip(msgs, nodes):
+            groups.setdefault(find(own), []).append(m)
+        out = []
+        for members in groups.values():
+            rows = [summary(x, read, replied) for x in members]
+            row = dict(rows[0])
+            row["unread"] = any(r["unread"] for r in rows)
+            row["flagged"] = any(r["flagged"] for r in rows)
+            row["mark"] = next((r["mark"] for r in rows if r["mark"]), None)
+            row["count"] = len(rows)
+            row["members"] = [r["uid"] for r in rows]
+            out.append(row)
+        return out
 
     @router.get("/me")
     def me(who: Principal = Depends(person)) -> dict[str, Any]:
@@ -368,7 +513,8 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
         mailbox: str | None = Query(None),
         q: str | None = Query(None, max_length=200),
         unseen: bool | None = Query(None),
-        limit: int = Query(40, ge=1, le=200),
+        view: str = Query("inbox", pattern="^(inbox|starred)$"),
+        limit: int = Query(40, ge=1, le=500),
     ) -> dict[str, Any]:
         try:
             who.require("read")
@@ -377,12 +523,16 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             raise HTTPException(403, str(e)) from e
         except NotFound as e:
             raise HTTPException(404, str(e)) from e
-        result = imap_unified_search(targets, limit=limit, text=q or None, unseen=unseen)
+        starred = view == "starred"
+        result = imap_unified_search(
+            targets, limit=limit, text=q or None, unseen=unseen, flagged=starred or None
+        )
         read, replied = marks()
-        return {
-            "messages": [summary(m, read, replied) for m in result["messages"]],
-            "errors": result["errors"],
-        }
+        if not starred and store.get_pref("threads", True):
+            rows = threaded(result["messages"], read, replied)
+        else:
+            rows = [summary(m, read, replied) for m in result["messages"]]
+        return {"messages": rows, "fetched": len(result["messages"]), "errors": result["errors"]}
 
     @router.get("/messages/{name}/{uid}")
     def message(
@@ -483,38 +633,315 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
         mb = mailbox(who, str(body.get("mailbox") or ""), "send", "send")
         if mb.smtp is None:
             raise HTTPException(409, f"mailbox {mb.name!r} has no SMTP configured")
-        to = [str(x) for x in body.get("to") or [] if str(x).strip()]
-        cc = [str(x) for x in body.get("cc") or [] if str(x).strip()]
+        to, cc, bcc = addrs(body, "to"), addrs(body, "cc"), addrs(body, "bcc")
         if not to:
             raise HTTPException(422, "at least one recipient")
         try:
             check_sender(mb.smtp, body.get("from_address"))
         except Forbidden as e:
             raise HTTPException(403, str(e)) from e
+        attachments = resolve_attachments(who, body.get("attachments"))
         copy_to = (mb.imap, mb.smtp.save_copy_to) if mb.imap and mb.smtp.save_copy_to else None
         try:
             result = smtp_send(
                 mb.smtp,
                 to=to,
                 cc=cc,
+                bcc=bcc,
                 subject=str(body.get("subject") or ""),
                 body_text=str(body.get("body_text") or ""),
                 from_address=body.get("from_address") or None,
                 in_reply_to=body.get("in_reply_to") or None,
                 references=body.get("references") or None,
                 copy_to=copy_to,
+                attachments=attachments,
             )
-        except SmtpError as e:
+        except (SmtpError, ValueError) as e:
             raise HTTPException(502, str(e)) from e
         audit.record(
             who.name,
             "send",
             mailbox=mb.name,
-            to=to + cc,
+            to=to + cc + bcc,
             message_id=result.get("message_id"),
             in_reply_to=body.get("in_reply_to"),
+            attachments=len(attachments) or None,
         )
+        draft = body.get("draft")
+        if isinstance(draft, dict) and draft.get("uid"):
+            # The draft became this message; a leftover would look unsent.
+            try:
+                old = composer(who, str(draft.get("mailbox") or ""))
+                delete_draft(imap_of(old), str(draft["uid"]), drafts_folder(old))
+            except (HTTPException, ImapError) as e:
+                result["draft_error"] = getattr(e, "detail", None) or str(e)
         return result
+
+    # ── conversations & batch actions ─────────────────────────────────────
+
+    @router.get("/thread/{name}/{uid}")
+    def thread(
+        name: str, uid: str, folder: str | None = None, who: Principal = Depends(person)
+    ) -> dict[str, Any]:
+        mb = mailbox(who, name, "read", "get_message", uid=uid)
+        imap = imap_of(mb)
+        here = folder or imap.default_folder
+        try:
+            msgs = fetch_thread(
+                imap,
+                uid,
+                folder=here,
+                sent_folder=mb.smtp.save_copy_to if mb.smtp else None,
+                related=bool(store.get_pref("threads", True)),
+            )
+        except ImapError as e:
+            raise HTTPException(502, str(e)) from e
+        audit.record(who.name, "get_message", mailbox=mb.name, uid=uid, folder=folder)
+        ids = {m.get("message_id") for m in msgs if m.get("message_id")}
+        uids = {str(m["uid"]) for m in msgs if m["folder"] == here}
+        history = []
+        for r in store.agent_marks(now() - MARK_WINDOW):
+            if r["action"] == "get_message" and r["mailbox"] == mb.name and str(r["uid"]) in uids:
+                history.append({"agent": r["agent"], "what": "leu", "ts": r["ts"]})
+            elif r["action"] == "send" and r["in_reply_to"] in ids:
+                history.append({"agent": r["agent"], "what": "respondeu", "ts": r["ts"]})
+        out = []
+        for m in msgs:
+            sender, sender_addr = parseaddr(m.get("from") or "")
+            try:
+                ts = parsedate_to_datetime(m.get("date") or "").timestamp()
+            except (TypeError, ValueError):
+                ts = 0
+            out.append(
+                {
+                    "uid": str(m["uid"]),
+                    "folder": m["folder"],
+                    "sent": m["folder"] != here,
+                    "opened": m["folder"] == here and str(m["uid"]) == uid,
+                    "from": sender or sender_addr,
+                    "from_address": sender_addr,
+                    "from_raw": m.get("from"),
+                    "reply_to": m.get("reply_to"),
+                    "to": m.get("to"),
+                    "cc": m.get("cc"),
+                    "subject": m.get("subject") or "",
+                    "date": m.get("date"),
+                    "ts": ts,
+                    "message_id": m.get("message_id"),
+                    "references": m.get("references"),
+                    "body": m.get("body_reader") or m.get("body_text") or "",
+                    "attachments": m.get("attachments") or [],
+                    "unread": "\\Seen" not in (m.get("flags") or []),
+                    "flagged": "\\Flagged" in (m.get("flags") or []),
+                }
+            )
+        return {
+            "mailbox": mb.name,
+            "mailbox_address": address(mb),
+            "folder": here,
+            "messages": out,
+            "members": [m["uid"] for m in out if not m["sent"]],
+            "agents": history,
+            "can": {
+                "reply": who.has("send") and mb.smtp is not None,
+                "mark": who.has("mark"),
+                "archive": who.has("mark"),
+                "trash": who.has("delete"),
+            },
+        }
+
+    @router.post("/batch")
+    def batch(body: dict = Body(...), who: Principal = Depends(person)) -> dict[str, Any]:
+        action = str(body.get("action") or "")
+        if action not in BATCH_ACTIONS:
+            raise HTTPException(422, f"unknown action {action!r}")
+        scope, audit_action = BATCH_ACTIONS[action]
+        items = body.get("items")
+        if not isinstance(items, list) or not items or len(items) > 500:
+            raise HTTPException(422, "items must list 1 to 500 messages")
+        by_box: dict[str, list[str]] = {}
+        for it in items:
+            if not isinstance(it, dict):
+                raise HTTPException(422, "each item is {mailbox, uid}")
+            by_box.setdefault(str(it.get("mailbox") or ""), []).append(str(it.get("uid") or ""))
+        folder = body.get("folder") or None
+        boxes = {
+            name: mailbox(who, name, scope, audit_action, uids=u) for name, u in by_box.items()
+        }
+        moved: dict[str, str] = {}
+        errors: list[dict[str, str]] = []
+        for name, uids in by_box.items():
+            mb = boxes[name]
+            fields: dict[str, Any] = {}
+            try:
+                if action in ("seen", "unseen"):
+                    set_flags(imap_of(mb), uids, "seen", action == "seen", folder=folder)
+                    fields["seen"] = action == "seen"
+                elif action in ("flag", "unflag"):
+                    set_flags(imap_of(mb), uids, "flagged", action == "flag", folder=folder)
+                    fields["flagged"] = action == "flag"
+                else:
+                    r = move_to(imap_of(mb), uids, action, folder=folder)
+                    moved[mb.name] = fields["moved_to"] = r["moved_to"]
+            except ImapError as e:
+                audit.record(who.name, audit_action, "error", mailbox=mb.name, uids=uids)
+                errors.append({"mailbox": mb.name, "error": str(e)})
+                continue
+            one = len(uids) == 1
+            audit.record(
+                who.name,
+                audit_action,
+                mailbox=mb.name,
+                uid=uids[0] if one else None,
+                uids=None if one else uids,
+                **fields,
+            )
+        if errors and len(errors) == len(by_box):
+            raise HTTPException(502, "; ".join(f"{e['mailbox']}: {e['error']}" for e in errors))
+        return {"ok": True, "moved_to": moved, "errors": errors}
+
+    # ── drafts ────────────────────────────────────────────────────────────
+
+    def composer(who: Principal, name: str) -> MailboxConfig:
+        mb = mailbox(who, name, "send", "draft")
+        if mb.smtp is None or mb.imap is None:
+            raise HTTPException(409, f"mailbox {mb.name!r} needs IMAP and SMTP for drafts")
+        return mb
+
+    def drafts_folder(mb: MailboxConfig) -> str:
+        folder = special(mb, "drafts")
+        if folder is None:
+            raise HTTPException(409, f"{address(mb)} has no Drafts folder")
+        return folder
+
+    def addr_text(value: str | None) -> list[str]:
+        return [f"{n} <{a}>" if n else a for n, a in getaddresses([value or ""]) if a and "@" in a]
+
+    @router.get("/drafts")
+    def drafts(who: Principal = Depends(person)) -> dict[str, Any]:
+        if not who.has("send"):
+            raise HTTPException(403, "this sign-in may not write mail")
+        targets = [m for m in who.visible(cfg) if m.imap is not None and m.smtp is not None]
+
+        def one(mb: MailboxConfig) -> tuple[MailboxConfig, list[dict[str, Any]], str | None]:
+            try:
+                folder = special(mb, "drafts")
+                if folder is None:
+                    return mb, [], None
+                return mb, list_messages(imap_of(mb), folder=folder, limit=50), None
+            except (ImapError, OSError) as e:
+                return mb, [], str(e)
+
+        rows, errors = [], []
+        with ThreadPoolExecutor(max_workers=max(1, len(targets))) as ex:
+            for mb, msgs, err in ex.map(one, targets):
+                if err:
+                    errors.append({"mailbox": mb.name, "error": err})
+                for m in msgs:
+                    try:
+                        ts = parsedate_to_datetime(m.get("date") or "").timestamp()
+                    except (TypeError, ValueError):
+                        ts = 0
+                    rows.append(
+                        {
+                            "uid": m.get("uid"),
+                            "mailbox": mb.name,
+                            "mailbox_address": address(mb),
+                            "to": ", ".join(addr_text(m.get("to"))),
+                            "subject": m.get("subject") or "",
+                            "ts": ts,
+                        }
+                    )
+        rows.sort(key=lambda r: r["ts"], reverse=True)
+        return {"drafts": rows, "errors": errors}
+
+    @router.get("/drafts/{name}/{uid}")
+    def get_draft(name: str, uid: str, who: Principal = Depends(person)) -> dict[str, Any]:
+        mb = composer(who, name)
+        folder = drafts_folder(mb)
+        try:
+            msg = imap_fetch(imap_of(mb), uid, folder=folder, reader=True)
+        except ImapError as e:
+            raise HTTPException(404, str(e)) from e
+        return {
+            "mailbox": mb.name,
+            "uid": uid,
+            "folder": folder,
+            "from": msg.get("from") or "",
+            "to": ", ".join(addr_text(msg.get("to"))),
+            "cc": ", ".join(addr_text(msg.get("cc"))),
+            "bcc": ", ".join(addr_text(msg.get("bcc"))),
+            "subject": msg.get("subject") or "",
+            "body": msg.get("body_text") or msg.get("body_reader") or "",
+            "in_reply_to": msg.get("in_reply_to") or None,
+            "references": msg.get("references") or None,
+            "attachments": msg.get("attachments") or [],
+        }
+
+    @router.put("/drafts")
+    def save_draft(body: dict = Body(...), who: Principal = Depends(person)) -> dict[str, Any]:
+        mb = composer(who, str(body.get("mailbox") or ""))
+        folder = drafts_folder(mb)
+        try:
+            check_sender(mb.smtp, body.get("from_address"))  # type: ignore[arg-type]
+        except Forbidden as e:
+            raise HTTPException(403, str(e)) from e
+        attachments = resolve_attachments(who, body.get("attachments"))
+        bcc = addrs(body, "bcc")
+        try:
+            msg = build_message(
+                body.get("from_address") or mb.smtp.from_address,  # type: ignore[union-attr]
+                addrs(body, "to"),
+                str(body.get("subject") or ""),
+                body_text=str(body.get("body_text") or ""),
+                cc=addrs(body, "cc"),
+                in_reply_to=body.get("in_reply_to") or None,
+                references=body.get("references") or None,
+                attachments=attachments,
+            )
+            if bcc:
+                msg["Bcc"] = ", ".join(bcc)
+        except (SmtpError, ValueError) as e:
+            raise HTTPException(422, str(e)) from e
+        try:
+            uid = append_message(imap_of(mb), folder, msg.as_bytes(), flags=r"(\Seen \Draft)")
+            if uid is None:
+                found = list_messages(
+                    imap_of(mb),
+                    folder=folder,
+                    limit=1,
+                    search=f'HEADER Message-ID "{msg["Message-ID"]}"',
+                )
+                uid = found[0]["uid"] if found else None
+        except ImapError as e:
+            raise HTTPException(502, str(e)) from e
+        result: dict[str, Any] = {
+            "mailbox": mb.name,
+            "folder": folder,
+            "uid": uid,
+            "attachments": [
+                {"index": i, "filename": a[0], "content_type": a[1], "size": len(a[2])}
+                for i, a in enumerate(attachments)
+            ],
+        }
+        replace = body.get("replace")
+        if isinstance(replace, dict) and replace.get("uid"):
+            try:
+                old = composer(who, str(replace.get("mailbox") or ""))
+                delete_draft(imap_of(old), str(replace["uid"]), drafts_folder(old))
+            except (HTTPException, ImapError) as e:
+                log.warning("draft: old version not removed: %s", getattr(e, "detail", e))
+                result["replace_error"] = str(getattr(e, "detail", e))
+        return result
+
+    @router.delete("/drafts/{name}/{uid}")
+    def discard_draft(name: str, uid: str, who: Principal = Depends(person)) -> dict:
+        mb = composer(who, name)
+        try:
+            delete_draft(imap_of(mb), uid, drafts_folder(mb))
+        except ImapError as e:
+            raise HTTPException(409, str(e)) from e
+        return {"ok": True}
 
     # ── agents ────────────────────────────────────────────────────────────
 
@@ -570,9 +997,13 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
     def notify_prefs(who: Principal) -> dict[str, Any]:
         saved = store.get_pref("notify", {})
         names = [m.name for m in who.visible(cfg) if m.imap is not None]
+        signatures = store.get_pref("signatures", {})
+        senders = [m.name for m in who.visible(cfg) if m.smtp is not None]
         return {
             "notify": {n: bool(saved.get(n, True)) for n in names},
             "notify_agent_send": bool(store.get_pref("notify_agent_send", True)),
+            "threads": bool(store.get_pref("threads", True)),
+            "signatures": {n: str(signatures.get(n, "")) for n in senders},
         }
 
     @router.get("/prefs")
@@ -590,6 +1021,18 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             store.set_pref("notify", merged)
         if "notify_agent_send" in body:
             store.set_pref("notify_agent_send", bool(body["notify_agent_send"]))
+        if "threads" in body:
+            store.set_pref("threads", bool(body["threads"]))
+        if isinstance(body.get("signatures"), dict):
+            merged = {
+                **current["signatures"],
+                **{
+                    k: str(v or "")[:MAX_SIGNATURE]
+                    for k, v in body["signatures"].items()
+                    if k in current["signatures"]
+                },
+            }
+            store.set_pref("signatures", merged)
         return notify_prefs(who)
 
     @router.get("/push/key")

@@ -3,6 +3,7 @@ from email.message import EmailMessage
 from email.utils import format_datetime
 from datetime import datetime, timedelta, timezone
 now = datetime.now(timezone(timedelta(hours=-3)))
+if now.hour < 12: now -= timedelta(days=1)  # keep 'today' in the past
 def at(days, h, m): return (now - timedelta(days=days)).replace(hour=h, minute=m, second=0, microsecond=0)
 demo = {
  "contato@exemplo.com.br": [
@@ -35,4 +36,27 @@ for user, msgs in demo.items():
         m["Date"] = format_datetime(when); m["Message-ID"] = f"<demo{i}.{user}>"; m.set_content(body)
         c.append("INBOX", "(\\Seen)" if seen else "", imaplib.Time2Internaldate(when.timestamp()), m.as_bytes())
     c.logout()
+# A conversation: Mariana's question, the answer in Sent, her follow-up with an attachment.
+c = imaplib.IMAP4("127.0.0.1", 31143); c.login("contato@exemplo.com.br", "pass")
+root = "<demo2.contato@exemplo.com.br>"
+c = imaplib.IMAP4("127.0.0.1", 31143); c.login("contato@exemplo.com.br", "pass")
+typ, folders = c.list()
+names = {f.decode().rsplit(' ', 1)[-1].strip('"') for f in folders}
+for f in ("Sent", "Drafts", "Trash"):
+    if f not in names:
+        c.create(f)
+r = EmailMessage(); r["From"] = "contato@exemplo.com.br"; r["To"] = "Mariana Duarte <mariana@clinicavida.com.br>"
+r["Subject"] = "Re: Orçamento para o e-mail da clínica"; r["Date"] = format_datetime(at(0, 10, 2))
+r["Message-ID"] = "<reply1.contato@exemplo.com.br>"; r["In-Reply-To"] = root; r["References"] = root
+r.set_content("Oi, Mariana!\n\nA migração das mensagens antigas é inclusa, e cada recepcionista pode ter o próprio endereço. Para seis caixas fica no plano Equipe.\n\nQuer que eu mande a proposta?")
+c.append("Sent", "(\\Seen)", imaplib.Time2Internaldate(at(0, 10, 2).timestamp()), r.as_bytes())
+f = EmailMessage(); f["From"] = "Mariana Duarte <mariana@clinicavida.com.br>"; f["To"] = "contato@exemplo.com.br"
+f["Cc"] = "Recepção <recepcao@clinicavida.com.br>"
+f["Subject"] = "Re: Orçamento para o e-mail da clínica"; f["Date"] = format_datetime(at(0, 10, 48))
+f["Message-ID"] = "<follow1@clinicavida.com.br>"; f["In-Reply-To"] = "<reply1.contato@exemplo.com.br>"
+f["References"] = f"{root} <reply1.contato@exemplo.com.br>"
+f.set_content("Quero sim! Coloquei a recepção em cópia. Segue o orçamento do provedor atual para comparar.\n\nMariana")
+f.add_attachment(b"%PDF-1.4\n% orcamento de teste\n" * 40, maintype="application", subtype="pdf", filename="orcamento-atual.pdf")
+c.append("INBOX", "", imaplib.Time2Internaldate(at(0, 10, 48).timestamp()), f.as_bytes())
+c.logout()
 print("seeded")

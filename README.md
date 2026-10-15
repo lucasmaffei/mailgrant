@@ -90,6 +90,9 @@ Then add the app to the Home Screen and turn notifications on.
 - **Turn it off** by removing the section or setting `enabled: false`. `/app`
   disappears and nothing is polled; agents are not affected.
 - The person is granted like an agent, so a read-only phone is one line.
+- It is a real mail client: conversations, reply all, forward, Cc/Bcc,
+  attachments, drafts saved to the mailbox's Drafts folder, signatures, stars,
+  archive, batch actions and swipe gestures on the phone.
 - Mail bodies are shown as text, attachments always download, and a strict
   CSP keeps every resource on your own origin.
 - The interface is in Brazilian Portuguese for now.

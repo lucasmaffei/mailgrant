@@ -10,19 +10,25 @@ const state = {
   hasPasskeys: false,
   setupCode: false,
   me: null,
+  prefs: null,
   counts: {},
   total: 0,
+  view: "inbox", // inbox | starred | drafts
   box: "all",
   q: "",
   limit: 40,
   list: [],
+  fetched: 0,
   listErrors: [],
   listKey: null,
   loadingList: false,
-  msg: null,
-  msgKey: null,
+  drafts: null,
+  selecting: false,
+  selected: new Set(),
+  thread: null,
+  threadKey: null,
+  expanded: new Set(),
   draft: null,
-  prefs: null,
   passkeys: null,
   agents: null,
   activity: null,
@@ -61,6 +67,15 @@ const ICONS = {
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
   face: '<path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2"/><path d="M9 9v1M15 9v1M12 9v4h-1M9.5 16c1.5 1 3.5 1 5 0"/>',
+  star: '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10h14V9M10 13h4"/>',
+  mailOpen: '<path d="M3 10 12 4l9 6v9H3z"/><path d="m3 10 9 6 9-6"/>',
+  reply: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v4"/>',
+  replyAll: '<path d="M8 14 3 9l5-5"/><path d="M13 14 8 9l5-5"/><path d="M8 9h7a6 6 0 0 1 6 6v4"/>',
+  forward: '<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0-6 6v4"/>',
+  clip: '<path d="m20 11.5-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.4 3.4 0 0 1 4.8 4.8l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  check: '<path d="m5 12 4.5 4.5L19 7"/>',
 };
 
 function icon(name) {
@@ -157,11 +172,21 @@ const SCOPE_WORDS = { read: "lê", mark: "marca", delete: "apaga", send: "envia"
 
 // ── routing ───────────────────────────────────────────────────────────────
 
+const LIST_VIEWS = ["inbox", "starred", "drafts"];
+const COMPOSE_VIEWS = ["compose", "reply", "replyall", "forward", "draft"];
+
 function route() {
   const parts = (location.hash.replace(/^#\/?/, "") || "inbox").split("/").map(decodeURIComponent);
   return { name: parts[0] || "inbox", args: parts.slice(1) };
 }
 const go = (path) => (location.hash = path);
+const enc = encodeURIComponent;
+
+function listHref() {
+  if (state.view === "starred") return "#/starred";
+  if (state.view === "drafts") return "#/drafts";
+  return state.box === "all" ? "#/inbox" : `#/inbox/${enc(state.box)}`;
+}
 
 async function onRoute() {
   const r = route();
@@ -170,20 +195,43 @@ async function onRoute() {
     if (!state.authed) return render();
   }
   if (!state.authed) return render();
+  // Leaving the editor keeps what was written: it is saved as a draft.
+  if (state.draft && !COMPOSE_VIEWS.includes(r.name)) await leaveDraft();
+  if (!LIST_VIEWS.includes(r.name) && r.name !== "m" && state.selecting) stopSelecting(false);
   try {
-    if (r.name === "inbox") {
-      state.box = r.args[0] || "all";
-      state.msg = null;
-      state.msgKey = null;
+    if (r.name === "inbox" || r.name === "starred") {
+      const box = r.name === "inbox" ? r.args[0] || "all" : "all";
+      if (state.view !== r.name || state.box !== box) stopSelecting(false);
+      state.view = r.name;
+      state.box = box;
+      clearThread();
       render();
       await loadList();
-    } else if (r.name === "m") {
-      if (!state.list.length) loadList();
-      await openMessage(r.args[0], r.args[1]);
-    } else if (r.name === "reply" || r.name === "compose") {
-      if (r.name === "reply" && state.msgKey !== `${r.args[0]}/${r.args[1]}`) await openMessage(r.args[0], r.args[1], false);
-      startDraft(r.name === "reply" ? state.msg : null);
+    } else if (r.name === "drafts") {
+      stopSelecting(false);
+      state.view = "drafts";
+      clearThread();
       render();
+      await loadDrafts();
+    } else if (r.name === "m") {
+      if (!state.list.length && state.view !== "drafts") loadList();
+      await openThread(r.args[0], r.args[1], r.args[2]);
+    } else if (r.name === "reply" || r.name === "replyall" || r.name === "forward") {
+      const key = `${r.name}:${r.args.join("/")}`;
+      if (state.draft?.key !== key) {
+        await leaveDraft();
+        const m = await threadMessage(r.args[0], r.args[1], r.args[2]);
+        startDraft(r.name, m, key);
+      }
+      render();
+    } else if (r.name === "compose") {
+      if (state.draft?.key !== "new") {
+        await leaveDraft();
+        startDraft("new", null, "new");
+      }
+      render();
+    } else if (r.name === "draft") {
+      await openDraft(r.args[0], r.args[1]);
     } else if (r.name === "agents") {
       render();
       await loadActivity();
@@ -201,9 +249,13 @@ async function onRoute() {
 // ── data ──────────────────────────────────────────────────────────────────
 
 async function loadMe() {
-  state.me = await api("/me");
+  const [me, prefs] = await Promise.all([api("/me"), api("/prefs")]);
+  state.me = me;
+  state.prefs = prefs;
   refreshCounts();
 }
+
+const can = (scope) => !!state.me?.scopes.includes(scope);
 
 async function refreshCounts() {
   try {
@@ -217,40 +269,89 @@ async function refreshCounts() {
   }
 }
 
+const wantedList = () => `${state.view}|${state.box}|${state.q}|${state.limit}`;
+
 async function loadList(force = false) {
-  const key = `${state.box}|${state.q}|${state.limit}`;
+  const key = wantedList();
   if (!force && key === state.listKey && state.list.length) return;
+  // Another list empties the screen; "load more" (a bigger limit) keeps it.
+  if (key.replace(/\|\d+$/, "") !== (state.listKey || "").replace(/\|\d+$/, "")) {
+    state.list = [];
+    state.listErrors = [];
+  }
   state.loadingList = true;
   render();
   try {
-    const params = new URLSearchParams({ limit: state.limit });
+    const params = new URLSearchParams({ limit: state.limit, view: state.view });
     if (state.box !== "all") params.set("mailbox", state.box);
     if (state.q) params.set("q", state.q);
     const data = await api(`/inbox?${params}`);
+    // A slower answer for a list the person already left must not replace the current one.
+    if (wantedList() !== key) return;
     state.list = data.messages;
+    state.fetched = data.fetched;
     state.listErrors = data.errors;
     state.listKey = key;
+  } finally {
+    if (wantedList() === key) state.loadingList = false;
+    render();
+  }
+}
+
+async function loadDrafts() {
+  state.loadingList = true;
+  render();
+  try {
+    const data = await api("/drafts");
+    state.drafts = data.drafts;
+    state.listErrors = data.errors;
   } finally {
     state.loadingList = false;
     render();
   }
 }
 
-async function openMessage(box, uid, markSeen = true) {
-  state.msgKey = `${box}/${uid}`;
-  state.msg = null;
+function clearThread() {
+  state.thread = null;
+  state.threadKey = null;
+}
+
+const msgKey = (m) => `${m.folder}/${m.uid}`;
+const rowKey = (m) => `${m.mailbox}/${m.uid}`;
+
+async function openThread(box, uid, folder, markSeen = true) {
+  const key = `${box}/${folder || ""}/${uid}`;
+  if (state.threadKey === key && state.thread) return render();
+  state.threadKey = key;
+  state.thread = null;
   render();
-  const msg = await api(`/messages/${encodeURIComponent(box)}/${encodeURIComponent(uid)}`);
-  if (state.msgKey !== `${box}/${uid}`) return;
-  state.msg = msg;
+  const t = await api(`/thread/${enc(box)}/${enc(uid)}${folder ? `?folder=${enc(folder)}` : ""}`);
+  if (state.threadKey !== key) return;
+  state.thread = t;
+  const last = t.messages.length - 1;
+  state.expanded = new Set(t.messages.filter((m, i) => i === last || m.unread || m.opened).map(msgKey));
   render();
-  const row = state.list.find((m) => m.mailbox === box && String(m.uid) === String(uid));
-  if (markSeen && msg.can.mark && row?.unread) {
-    await api(`/messages/${encodeURIComponent(box)}/${encodeURIComponent(uid)}/seen`, { method: "POST", body: { seen: true } });
-    row.unread = false;
+  const unread = t.messages.filter((m) => m.unread && !m.sent).map((m) => m.uid);
+  if (markSeen && t.can.mark && unread.length) {
+    await batch("seen", unread.map((u) => ({ mailbox: t.mailbox, uid: u })), { folder: t.folder });
+    t.messages.forEach((m) => { if (!m.sent) m.unread = false; });
+    rowsOf(t).forEach((r) => (r.unread = false));
     refreshCounts();
   }
 }
+
+// The message a reply or forward starts from, loading its conversation if needed.
+async function threadMessage(box, uid, folder) {
+  const find = () => state.thread?.mailbox === box &&
+    state.thread.messages.find((m) => String(m.uid) === String(uid) && (!folder || m.folder === folder));
+  if (!find()) await openThread(box, uid, folder, false);
+  const m = find();
+  if (!m) throw new Error("Mensagem não encontrada.");
+  return m;
+}
+
+// List rows that hold any message of this conversation.
+const rowsOf = (t) => state.list.filter((r) => r.mailbox === t.mailbox && r.members.some((u) => t.members.includes(u)));
 
 async function loadActivity() {
   const [act, agents] = await Promise.all([api(`/activity?kind=${state.actKind}`), state.agents ? null : api("/agents")]);
@@ -275,6 +376,62 @@ async function checkPush() {
   const sub = reg ? await reg.pushManager.getSubscription() : null;
   state.push.subscribed = !!sub && Notification.permission === "granted";
 }
+
+// ── actions on messages ───────────────────────────────────────────────────
+
+const batch = (action, items, extra = {}) => api("/batch", { method: "POST", body: { action, items, ...extra } });
+
+const plural = (n, one, many) => (n === 1 ? one : many.replace("#", n));
+
+async function actOnRows(action, rows) {
+  if (!rows.length) return;
+  // A star goes on the newest message of a conversation; taking it off clears them all.
+  const items = action === "flag"
+    ? rows.map((r) => ({ mailbox: r.mailbox, uid: r.uid }))
+    : rows.flatMap((r) => r.members.map((uid) => ({ mailbox: r.mailbox, uid })));
+  try {
+    const res = await batch(action, items);
+    const gone = new Set();
+    for (const r of rows) {
+      if (action === "seen" || action === "unseen") r.unread = action === "unseen";
+      else if (action === "flag" || action === "unflag") {
+        r.flagged = action === "flag";
+        if (!r.flagged && state.view === "starred") gone.add(r);
+      } else gone.add(r);
+    }
+    if (gone.size) state.list = state.list.filter((r) => !gone.has(r));
+    if (action === "archive") toast(plural(rows.length, "Arquivada.", "# arquivadas."));
+    if (action === "trash") toast(plural(rows.length, "Movida para a lixeira.", "# na lixeira."));
+    if (res.errors?.length) toast(res.errors.map((e) => `${e.mailbox}: ${e.error}`).join(" · "));
+    refreshCounts();
+  } catch (e) {
+    toast(e.message);
+  }
+  render();
+}
+
+function startSelecting(key) {
+  state.selecting = true;
+  state.selected = new Set(key ? [key] : []);
+  render();
+}
+
+function stopSelecting(redraw = true) {
+  state.selecting = false;
+  state.selected = new Set();
+  if (redraw) render();
+}
+
+// The tap that ends a long press lands on the freshly drawn row; it must not unselect it.
+let gesture = { key: null, at: 0 };
+
+function toggleSelect(key) {
+  if (key === gesture.key && Date.now() - gesture.at < 600) return;
+  state.selected.has(key) ? state.selected.delete(key) : state.selected.add(key);
+  render();
+}
+
+const selectedRows = () => state.list.filter((m) => state.selected.has(rowKey(m)));
 
 // ── passkeys ──────────────────────────────────────────────────────────────
 
@@ -413,52 +570,294 @@ async function disablePush() {
   render();
 }
 
-// ── drafts ────────────────────────────────────────────────────────────────
+// ── writing: drafts, replies, forwards ────────────────────────────────────
 
-function startDraft(original) {
-  const key = original ? `reply:${original.mailbox}/${original.uid}` : "new";
-  if (state.draft?.key === key) return;
-  const sendable = state.me.mailboxes.filter((m) => m.smtp && state.me.scopes.includes("send"));
-  if (original) {
-    const quoted = original.body.split("\n").map((l) => `> ${l}`).join("\n");
-    state.draft = {
-      key,
-      mailbox: original.mailbox,
-      from: "",
-      to: original.from_address,
-      subject: /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`,
-      body: `\n\nEm ${new Date(original.date).toLocaleString("pt-BR")}, ${original.from} escreveu:\n${quoted}`,
-      in_reply_to: original.message_id,
-      references: `${original.references || ""} ${original.message_id || ""}`.trim(),
-    };
-  } else {
-    const first = sendable.find((m) => m.name === state.box) || sendable[0];
-    state.draft = { key, mailbox: first?.name || "", from: "", to: "", subject: "", body: "", in_reply_to: null, references: null };
+const MAX_ATTACH = 25 * 1024 * 1024;
+let saveTimer = null;
+
+const emailOf = (s) => ((/<([^>]+)>/.exec(s || "") || [])[1] || s || "").trim().toLowerCase();
+
+// "Ana <a@x>, "Silva, B" <b@y>" → two entries: commas inside quotes or <> don't split.
+function splitAddrs(text) {
+  const out = [];
+  let cur = "";
+  let quoted = false;
+  let angle = false;
+  for (const ch of text || "") {
+    if (ch === '"') quoted = !quoted;
+    else if (ch === "<") angle = true;
+    else if (ch === ">") angle = false;
+    if ((ch === "," || ch === ";") && !quoted && !angle) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
   }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter((a) => a.includes("@"));
+}
+
+function myAddresses() {
+  const mine = new Set();
+  for (const m of state.me.mailboxes) {
+    mine.add(emailOf(m.address));
+    m.from_options.forEach((f) => mine.add(emailOf(f)));
+  }
+  return mine;
+}
+
+function signature(box) {
+  const s = (state.prefs?.signatures?.[box] || "").trim();
+  return s ? `\n\n-- \n${s}` : "";
+}
+
+const longDate = (m) => new Date(m.ts * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+
+function quoted(m) {
+  const lines = (m.body || "").replace(/\s+$/, "").split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n");
+  return `\n\nEm ${longDate(m)}, ${m.from_raw || m.from} escreveu:\n${lines}`;
+}
+
+function forwarded(m) {
+  return "\n\n---------- Mensagem encaminhada ----------\n" +
+    `De: ${m.from_raw || m.from}\nData: ${longDate(m)}\nAssunto: ${m.subject}\nPara: ${m.to || ""}` +
+    (m.cc ? `\nCc: ${m.cc}` : "") + `\n\n${m.body || ""}`;
+}
+
+// What the person wrote, ignoring From: opening the editor and closing it again
+// (or only switching the sender) must not leave a draft behind.
+const snapshot = (d) => JSON.stringify([d.to, d.cc, d.bcc, d.subject, d.body, d.attachments.length]);
+const worthSaving = (d) => !!d.saved || snapshot(d) !== d.initial;
+
+function blankDraft(key, mode, mailbox) {
+  return { key, mode, mailbox, from: "", to: "", cc: "", bcc: "", showCc: false, subject: "", body: "",
+    in_reply_to: null, references: null, attachments: [], saved: null, dirty: false, status: "", sig: "" };
+}
+
+function startDraft(mode, m, key) {
+  const sendable = state.me.mailboxes.filter((x) => x.smtp);
+  if (mode === "new") {
+    const first = sendable.find((x) => x.name === state.box) || sendable[0];
+    const d = blankDraft(key, mode, first?.name || "");
+    d.sig = signature(d.mailbox);
+    d.body = d.sig;
+    d.initial = snapshot(d);
+    state.draft = d;
+    return;
+  }
+  const t = state.thread;
+  const d = blankDraft(key, mode, t.mailbox);
+  d.sig = signature(t.mailbox);
+  const subject = m.subject || "";
+  if (mode === "forward") {
+    d.subject = /^(fwd?|enc):/i.test(subject) ? subject : `Fwd: ${subject}`;
+    d.body = d.sig + forwarded(m);
+    d.attachments = m.attachments.map((a) => ({ kind: "ref", ref: { mailbox: t.mailbox, folder: m.folder, uid: m.uid, index: a.index },
+      filename: a.filename || "anexo", size: a.size }));
+  } else {
+    const mine = myAddresses();
+    // Answering my own sent message means writing to its recipients again.
+    const to = m.sent ? splitAddrs(m.to) : splitAddrs(m.reply_to || m.from_raw || m.from_address);
+    d.to = to.join(", ");
+    if (mode === "replyall") {
+      const taken = new Set(to.map(emailOf));
+      const others = [...(m.sent ? [] : splitAddrs(m.to)), ...splitAddrs(m.cc)].filter((a) => {
+        const e = emailOf(a);
+        if (mine.has(e) || taken.has(e)) return false;
+        taken.add(e);
+        return true;
+      });
+      d.cc = others.join(", ");
+      d.showCc = !!d.cc;
+    }
+    d.subject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
+    d.body = d.sig + quoted(m);
+    d.in_reply_to = m.message_id;
+    d.references = `${m.references || ""} ${m.message_id || ""}`.trim();
+  }
+  d.initial = snapshot(d);
+  state.draft = d;
+}
+
+async function openDraft(box, uid) {
+  const key = `draft:${box}/${uid}`;
+  if (state.draft?.key === key) return render();
+  await leaveDraft();
+  state.draft = null;
+  render();
+  const x = await api(`/drafts/${enc(box)}/${enc(uid)}`);
+  const options = state.me.mailboxes.find((m) => m.name === box)?.from_options || [];
+  const at = options.findIndex((f) => emailOf(f) === emailOf(x.from));
+  const d = blankDraft(key, "draft", box);
+  Object.assign(d, {
+    from: at > 0 ? options[at] : "", to: x.to, cc: x.cc, bcc: x.bcc, showCc: !!(x.cc || x.bcc),
+    subject: x.subject, body: x.body, in_reply_to: x.in_reply_to, references: x.references,
+    attachments: x.attachments.map((a) => ({ kind: "ref", ref: { mailbox: box, folder: x.folder, uid: x.uid, index: a.index },
+      filename: a.filename || "anexo", size: a.size })),
+    saved: { mailbox: box, uid: x.uid }, sig: signature(box),
+  });
+  d.initial = snapshot(d);
+  state.draft = d;
+  render();
+}
+
+function draftPayload(d) {
+  return {
+    mailbox: d.mailbox, from_address: d.from || null,
+    to: splitAddrs(d.to), cc: splitAddrs(d.cc), bcc: splitAddrs(d.bcc),
+    subject: d.subject, body_text: d.body, in_reply_to: d.in_reply_to, references: d.references,
+    attachments: d.attachments.map((a) => (a.kind === "upload"
+      ? { filename: a.filename, content_type: a.content_type, data: a.data } : { ref: a.ref })),
+  };
+}
+
+function setDraftStatus(d, text) {
+  d.status = text;
+  const el = document.getElementById("draft-status");
+  if (el && state.draft === d) el.textContent = text;
+}
+
+function touchDraft() {
+  const d = state.draft;
+  if (!d) return;
+  d.dirty = true;
+  d.confirmDiscard = false;
+  clearTimeout(saveTimer);
+  if (!d.noDrafts && worthSaving(d)) saveTimer = setTimeout(() => saveDraft(d), 2500);
+}
+
+// Saves a new version in the mailbox's Drafts folder and erases the previous
+// one. Attachments then point at the saved draft, so they upload only once.
+function saveDraft(d = state.draft) {
+  if (!d || d.noDrafts) return Promise.resolve();
+  clearTimeout(saveTimer);
+  if (d.saving) {
+    d.again = true;
+    return d.saving;
+  }
+  if (!d.dirty || !worthSaving(d)) return Promise.resolve();
+  d.dirty = false;
+  const sent = d.attachments.slice();
+  setDraftStatus(d, "Salvando…");
+  d.saving = (async () => {
+    try {
+      const r = await api("/drafts", { method: "PUT", body: { ...draftPayload(d), replace: d.saved } });
+      d.saved = r.uid ? { mailbox: r.mailbox, uid: r.uid } : null;
+      if (r.uid) {
+        sent.forEach((a, i) => {
+          const at = d.attachments.indexOf(a);
+          if (at >= 0 && r.attachments[i]) {
+            d.attachments[at] = { kind: "ref", ref: { mailbox: r.mailbox, folder: r.folder, uid: r.uid, index: r.attachments[i].index },
+              filename: a.filename, size: a.size };
+          }
+        });
+      }
+      setDraftStatus(d, `Rascunho salvo ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`);
+      state.drafts = null;
+    } catch (e) {
+      d.dirty = true;
+      if (e.status === 409) {
+        d.noDrafts = true;
+        setDraftStatus(d, "Esta caixa não tem pasta de rascunhos");
+      } else setDraftStatus(d, "Rascunho não salvo");
+    } finally {
+      d.saving = null;
+      if (d.again) {
+        d.again = false;
+        await saveDraft(d);
+      }
+    }
+  })();
+  return d.saving;
+}
+
+async function leaveDraft() {
+  const d = state.draft;
+  if (!d) return;
+  clearTimeout(saveTimer);
+  state.draft = null;
+  if (d.dirty && !d.noDrafts && worthSaving(d)) {
+    await saveDraft(d);
+    if (d.saved) toast("Rascunho salvo.");
+  } else if (d.saving) await d.saving;
+}
+
+function closeCompose() {
+  history.length > 1 ? history.back() : go("/inbox");
+}
+
+async function discardDraft() {
+  const d = state.draft;
+  if (!d.confirmDiscard) {
+    d.confirmDiscard = true;
+    render();
+    return;
+  }
+  clearTimeout(saveTimer);
+  state.draft = null;
+  if (d.saving) await d.saving;
+  if (d.saved?.uid) await api(`/drafts/${enc(d.saved.mailbox)}/${enc(d.saved.uid)}`, { method: "DELETE" }).catch((e) => toast(e.message));
+  state.drafts = null;
+  toast("Rascunho descartado.");
+  d.mode === "draft" ? go("/drafts") : closeCompose();
+}
+
+async function addFiles(files) {
+  const d = state.draft;
+  const used = () => d.attachments.reduce((n, a) => n + (a.size || 0), 0);
+  for (const f of files) {
+    if (used() + f.size > MAX_ATTACH) {
+      toast("Os anexos passam de 25 MB.");
+      break;
+    }
+    const data = await new Promise((ok, fail) => {
+      const r = new FileReader();
+      r.onload = () => ok(String(r.result).split(",")[1] || "");
+      r.onerror = () => fail(new Error(`Não deu para ler ${f.name}.`));
+      r.readAsDataURL(f);
+    });
+    d.attachments.push({ kind: "upload", filename: f.name, content_type: f.type || "application/octet-stream", size: f.size, data });
+  }
+  touchDraft();
+  render();
 }
 
 async function sendDraft() {
   const d = state.draft;
-  const to = d.to.split(/[,;\s]+/).filter(Boolean);
-  if (!to.length) return toast("Falta o destinatário.");
+  if (!splitAddrs(d.to).length) return toast("Falta o destinatário.");
+  clearTimeout(saveTimer);
   state.busy = true;
   render();
   try {
-    await api("/send", {
-      method: "POST",
-      body: { mailbox: d.mailbox, to, subject: d.subject, body_text: d.body, from_address: d.from || null,
-              in_reply_to: d.in_reply_to, references: d.references },
-    });
+    if (d.saving) await d.saving;
+    await api("/send", { method: "POST", body: { ...draftPayload(d), draft: d.saved } });
     toast("Enviado.");
-    const wasReply = d.key.startsWith("reply:");
     state.draft = null;
-    history.length > 1 && wasReply ? history.back() : go("/inbox");
+    state.drafts = null;
+    if (["reply", "replyall", "forward"].includes(d.mode)) {
+      state.threadKey = null; // reload it to show the answer
+      closeCompose();
+    } else go(d.mode === "draft" ? "/drafts" : "/inbox");
   } catch (e) {
     toast(e.message);
   } finally {
     state.busy = false;
     render();
   }
+}
+
+function changeFrom(value) {
+  const d = state.draft;
+  const [box, from] = value.split("|");
+  const sig = signature(box);
+  const untouched = snapshot(d) === d.initial;
+  if (d.sig && d.body.includes(d.sig)) d.body = d.body.replace(d.sig, sig);
+  else if (!d.sig && sig && d.mode === "new" && !d.body.trim()) d.body = sig;
+  d.sig = sig;
+  if (untouched) d.initial = snapshot(d);
+  d.mailbox = box;
+  d.from = from;
+  touchDraft();
+  render();
 }
 
 // ── views ─────────────────────────────────────────────────────────────────
@@ -502,14 +901,19 @@ function authView() {
 
 function sidebar(r) {
   const boxes = state.me.mailboxes.filter((m) => m.imap);
-  const current = r.name === "inbox" || r.name === "m" ? state.box : null;
+  const inList = LIST_VIEWS.includes(r.name) || r.name === "m";
+  const at = (view, box = "all") => inList && state.view === view && (view !== "inbox" || state.box === box) ? "page" : null;
   return h("aside", { class: "side" },
     h("div", { class: "wordmark" }, "mailgrant", h("i", {}, ".")),
-    state.me.scopes.includes("send") && h("a", { href: "#/compose", class: "btn small side-compose" }, "Escrever"),
-    h("nav", { "aria-label": "Caixas" },
-      h("a", { href: "#/inbox", "aria-current": current === "all" ? "page" : null },
+    can("send") && h("a", { href: "#/compose", class: "btn small side-compose" }, "Escrever"),
+    h("nav", { "aria-label": "Pastas" },
+      h("a", { href: "#/inbox", "aria-current": at("inbox") },
         h("span", {}, "Todas as caixas"), state.total ? h("span", { class: "count" }, state.total) : null),
-      boxes.map((m) => h("a", { href: `#/inbox/${encodeURIComponent(m.name)}`, "aria-current": current === m.name ? "page" : null },
+      h("a", { href: "#/starred", "aria-current": at("starred") }, h("span", {}, "Com estrela")),
+      can("send") && h("a", { href: "#/drafts", "aria-current": at("drafts") }, h("span", {}, "Rascunhos"))),
+    h("nav", { "aria-label": "Caixas" },
+      h("span", { class: "side-label" }, "Caixas"),
+      boxes.map((m) => h("a", { href: `#/inbox/${enc(m.name)}`, "aria-current": at("inbox", m.name) },
         h("span", {}, m.address), state.counts[m.name] ? h("span", { class: "count" }, state.counts[m.name]) : null)),
     ),
     h("nav", { class: "bottom", "aria-label": "Mais" },
@@ -519,115 +923,326 @@ function sidebar(r) {
   );
 }
 
-function listPane(r) {
+// Swipe right: read/unread. Swipe left: archive. Long press: select.
+function attachGestures(wrap, row, m) {
+  let x0 = 0, y0 = 0, dx = 0, pid = null, active = false, swiping = false, press = null;
+  const settle = () => {
+    row.classList.remove("dragging");
+    row.style.transform = "";
+    wrap.classList.remove("swipe-left", "swipe-right", "armed");
+  };
+  row.addEventListener("click", (e) => {
+    if (Date.now() - (row._gestureAt || 0) < 600) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  wrap.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" || e.target.closest(".star")) return;
+    x0 = e.clientX; y0 = e.clientY; dx = 0; pid = e.pointerId; active = true; swiping = false;
+    press = setTimeout(() => {
+      if (!active || swiping) return;
+      active = false;
+      row._gestureAt = Date.now();
+      gesture = { key: rowKey(m), at: row._gestureAt };
+      navigator.vibrate?.(10);
+      startSelecting(rowKey(m));
+    }, 550);
+  });
+  wrap.addEventListener("pointermove", (e) => {
+    if (!active || e.pointerId !== pid) return;
+    const mx = e.clientX - x0;
+    const my = e.clientY - y0;
+    if (!swiping) {
+      if (Math.abs(my) > 10) { active = false; clearTimeout(press); return; }
+      if (Math.abs(mx) < 12) return;
+      swiping = true;
+      clearTimeout(press);
+      row.classList.add("dragging");
+      try { wrap.setPointerCapture(pid); } catch (_) { /* pointer already gone */ }
+    }
+    dx = Math.max(-150, Math.min(150, mx));
+    row.style.transform = `translateX(${dx}px)`;
+    wrap.classList.toggle("swipe-right", dx > 0);
+    wrap.classList.toggle("swipe-left", dx < 0);
+    wrap.classList.toggle("armed", Math.abs(dx) > 80);
+  });
+  const end = () => {
+    clearTimeout(press);
+    if (!active) return;
+    active = false;
+    if (!swiping) return;
+    row._gestureAt = Date.now();
+    row.classList.remove("dragging");
+    if (dx > 80) { settle(); actOnRows(m.unread ? "seen" : "unseen", [m]); }
+    else if (dx < -80) { row.style.transform = "translateX(-100%)"; setTimeout(() => actOnRows("archive", [m]), 180); }
+    else settle();
+  };
+  wrap.addEventListener("pointerup", end);
+  wrap.addEventListener("pointercancel", () => { clearTimeout(press); if (active && swiping) settle(); active = false; });
+}
+
+function rowView(m) {
+  const key = rowKey(m);
+  const selected = state.selected.has(key);
+  const cls = `row${m.unread ? " unread" : ""}${selected ? " selected" : ""}`;
+  const kids = [
+    state.selecting ? h("span", { class: `check${selected ? " on" : ""}`, "aria-hidden": "true" }, selected && icon("check"))
+      : m.unread && h("span", { class: "dot", "aria-label": "Não lida" }),
+    h("div", { class: "top" },
+      h("span", { class: "from" }, m.from || m.from_address),
+      m.count > 1 && h("span", { class: "thread-n mono" }, m.count),
+      h("span", { class: "mono" }, when(m.ts))),
+    h("span", { class: "subject" }, m.subject || "(sem assunto)"),
+    h("span", { class: "mono" }, m.mark ? `${m.mailbox_address} · ${m.mark}` : m.mailbox_address),
+  ];
+  const row = state.selecting
+    ? h("button", { type: "button", class: cls, "aria-pressed": selected ? "true" : "false", onClick: () => toggleSelect(key) }, kids)
+    : h("a", { class: cls, href: `#/m/${enc(m.mailbox)}/${enc(m.uid)}`, "aria-current": state.thread && rowsOf(state.thread).includes(m) ? "true" : null }, kids);
+  const star = !state.selecting && (can("mark") || m.flagged) && h("button", {
+    type: "button", class: `star${m.flagged ? " on" : ""}`, disabled: !can("mark"),
+    "aria-label": m.flagged ? "Tirar a estrela" : "Marcar com estrela", "aria-pressed": m.flagged ? "true" : "false",
+    onClick: (e) => { e.preventDefault(); actOnRows(m.flagged ? "unflag" : "flag", [m]); },
+  }, icon("star"));
+  const wrap = h("div", { class: "row-wrap" },
+    h("div", { class: "swipe-bg read", "aria-hidden": "true" }, icon(m.unread ? "mailOpen" : "mail"), m.unread ? "Lida" : "Não lida"),
+    h("div", { class: "swipe-bg arch", "aria-hidden": "true" }, "Arquivar", icon("archive")),
+    row, star);
+  if (!state.selecting && can("mark") && !WIDE.matches) attachGestures(wrap, row, m);
+  return wrap;
+}
+
+function draftRow(d) {
+  return h("a", { class: "row", href: `#/draft/${enc(d.mailbox)}/${enc(d.uid)}`,
+    "aria-current": state.draft?.key === `draft:${d.mailbox}/${d.uid}` ? "true" : null },
+    h("div", { class: "top" }, h("span", { class: "from" }, d.to ? `Para ${d.to}` : "(sem destinatário)"), h("span", { class: "mono" }, when(d.ts))),
+    h("span", { class: "subject" }, d.subject || "(sem assunto)"),
+    h("span", { class: "mono" }, d.mailbox_address));
+}
+
+function selectionBar() {
+  const rows = selectedRows();
+  const allRead = rows.length > 0 && rows.every((r) => !r.unread);
+  const allStarred = rows.length > 0 && rows.every((r) => r.flagged);
+  const tool = (name, label, action) => h("button", { type: "button", class: "tool", disabled: !rows.length,
+    onClick: async () => { await actOnRows(action, rows); stopSelecting(); } }, icon(name), h("span", {}, label));
+  return h("div", { class: "selbar", role: "toolbar", "aria-label": "Ações nas selecionadas" },
+    tool(allRead ? "mail" : "mailOpen", allRead ? "Não lida" : "Lida", allRead ? "unseen" : "seen"),
+    tool("star", allStarred ? "Sem estrela" : "Estrela", allStarred ? "unflag" : "flag"),
+    tool("archive", "Arquivar", "archive"),
+    can("delete") && tool("trash", "Lixeira", "trash"));
+}
+
+function listPane() {
   const boxes = state.me.mailboxes.filter((m) => m.imap);
-  const current = boxByName(state.box);
+  const current = state.view === "inbox" ? boxByName(state.box) : null;
+  const drafts = state.view === "drafts";
   let search;
   const doSearch = () => { state.q = search.value.trim(); state.limit = 40; loadList(true); };
   const unreadHere = state.box === "all" ? state.total : state.counts[state.box] || 0;
+  const title = state.view === "starred" ? "Com estrela" : drafts ? "Rascunhos" :
+    current ? current.address : WIDE.matches ? "Todas as caixas" : "Entrada";
+  const sub = state.view === "starred" ? plural(state.list.length, "1 mensagem", "# mensagens") :
+    drafts ? plural((state.drafts || []).length, "1 rascunho", "# rascunhos") :
+    `${unreadHere} não lidas · ${boxes.length} caixas`;
+  const n = state.selected.size;
+  const chip = (label, href, pressed, count) => h("a", { class: "chip", href, "aria-pressed": pressed ? "true" : "false" },
+    label, count ? h("span", { class: "n" }, count) : null);
+  const head = state.selecting
+    ? h("div", { class: "hdr-row sel-row" },
+        h("button", { type: "button", class: "btn quiet small bare", onClick: () => stopSelecting() }, "Cancelar"),
+        h("strong", { class: "bar-title" }, n ? plural(n, "1 selecionada", "# selecionadas") : "Selecione"),
+        h("button", { type: "button", class: "btn quiet small bare", onClick: () => {
+          state.selected = n === state.list.length ? new Set() : new Set(state.list.map(rowKey)); render(); } },
+          n === state.list.length && n ? "Nenhuma" : "Todas"))
+    : h("div", { class: "hdr-row" },
+        h("div", {}, h("h1", { class: "title" }, title), h("div", { class: "sub" }, sub)),
+        h("div", { class: "hdr-actions" },
+          !drafts && can("mark") && state.list.length > 0 && h("button", { type: "button", class: "btn quiet small", onClick: () => startSelecting() }, "Selecionar"),
+          can("send") && h("a", { href: "#/compose", class: "icon-btn", "aria-label": "Escrever e-mail" }, icon("pencil"))));
   return h("section", { class: "pane pane-list", "aria-label": "Mensagens" },
     h("header", { class: "hdr" },
-      h("div", { class: "hdr-row" },
-        h("div", {},
-          h("h1", { class: "title" }, current ? current.address : WIDE.matches ? "Todas as caixas" : "Entrada"),
-          h("div", { class: "sub" }, `${unreadHere} não lidas · ${boxes.length} caixas`)),
-        state.me.scopes.includes("send") && h("a", { href: "#/compose", class: "icon-btn", "aria-label": "Escrever e-mail" }, icon("pencil")),
-      ),
-      h("label", { class: "search" }, icon("search"),
+      head,
+      !drafts && !state.selecting && h("label", { class: "search" }, icon("search"),
         search = h("input", { id: "q", type: "search", placeholder: "Buscar", "aria-label": "Buscar nas caixas", value: state.q,
           onKeydown: (e) => e.key === "Enter" && doSearch(), onSearch: doSearch })),
-      h("div", { class: "chips", role: "group", "aria-label": "Filtrar por caixa" },
-        [{ name: "all", address: "Todas" }, ...boxes].map((m) =>
-          h("button", { type: "button", class: "chip", "aria-pressed": state.box === m.name ? "true" : "false",
-            onClick: () => go(m.name === "all" ? "/inbox" : `/inbox/${encodeURIComponent(m.name)}`) },
-            shortAddr(m.address), (m.name === "all" ? state.total : state.counts[m.name]) ? h("span", { class: "n" }, m.name === "all" ? state.total : state.counts[m.name]) : null))),
-    ),
-    h("div", { class: "scroll" },
+      !state.selecting && h("div", { class: "chips", role: "group", "aria-label": "Filtrar" },
+        chip("Todas", "#/inbox", state.view === "inbox" && state.box === "all", state.total),
+        chip("Com estrela", "#/starred", state.view === "starred"),
+        can("send") && chip("Rascunhos", "#/drafts", drafts),
+        boxes.map((m) => chip(shortAddr(m.address), `#/inbox/${enc(m.name)}`, state.view === "inbox" && state.box === m.name, state.counts[m.name])))),
+    h("div", { class: "scroll", "data-key": `list:${state.view}|${state.box}|${state.q}` },
       state.listErrors.map((e) => h("div", { class: "err" }, `${e.mailbox}: ${e.error}`)),
-      state.loadingList && !state.list.length ? h("div", { class: "empty" }, "Carregando…") :
-      !state.list.length ? h("div", { class: "empty" }, state.q ? "Nada encontrado." : "Nenhuma mensagem aqui.") :
-      h("div", { class: "rows" }, state.list.map((m) =>
-        h("a", { class: `row${m.unread ? " unread" : ""}`, href: `#/m/${encodeURIComponent(m.mailbox)}/${encodeURIComponent(m.uid)}`,
-          "aria-current": state.msgKey === `${m.mailbox}/${m.uid}` ? "true" : null },
-          m.unread && h("span", { class: "dot", "aria-label": "Não lida" }),
-          h("div", { class: "top" }, h("span", { class: "from" }, m.from || m.from_address), h("span", { class: "mono" }, when(m.ts))),
-          h("span", { class: "subject" }, m.subject || "(sem assunto)"),
-          h("span", { class: "mono" }, m.mark ? `${m.mailbox_address} · ${m.mark}` : m.mailbox_address)))),
-      state.list.length >= state.limit && h("button", { class: "more", onClick: () => { state.limit += 40; loadList(true); } }, "Carregar mais"),
+      drafts ? (
+        state.drafts === null ? h("div", { class: "empty" }, "Carregando…") :
+        !state.drafts.length ? h("div", { class: "empty" }, "Nenhum rascunho. O que você começa a escrever fica salvo aqui.") :
+        h("div", { class: "rows" }, state.drafts.map(draftRow))
+      ) : (
+        state.loadingList && !state.list.length ? h("div", { class: "empty" }, "Carregando…") :
+        !state.list.length ? h("div", { class: "empty" }, state.q ? "Nada encontrado." : state.view === "starred" ? "Nenhuma mensagem com estrela." : "Nenhuma mensagem aqui.") :
+        h("div", { class: "rows" }, state.list.map(rowView))
+      ),
+      !drafts && state.fetched >= state.limit && h("button", { class: "more", onClick: () => { state.limit += 40; loadList(true); } },
+        state.loadingList ? "Carregando…" : "Carregar mais antigas"),
     ),
+    state.selecting && selectionBar(),
   );
 }
 
+// ── a conversation ─────────────────────────────────────────────────────────
+
+function replyHref(kind, t, m) {
+  return `#/${kind}/${enc(t.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`;
+}
+
+function threadMessageView(t, m, isLast) {
+  const open = state.expanded.has(msgKey(m));
+  const many = t.messages.length > 1;
+  const who = m.sent ? "Você" : m.from || m.from_address;
+  const toggle = () => { open ? state.expanded.delete(msgKey(m)) : state.expanded.add(msgKey(m)); render(); };
+  if (!open) {
+    return h("button", { type: "button", class: `tmsg folded${m.unread ? " unread" : ""}`, onClick: toggle },
+      h("div", { class: "top" }, h("span", { class: "from" }, who), h("span", { class: "mono" }, when(m.ts))),
+      h("span", { class: "snippet" }, (m.body || "").replace(/\s+/g, " ").slice(0, 140) || "(sem texto)"));
+  }
+  const path = `/messages/${enc(t.mailbox)}/${enc(m.uid)}`;
+  const recipients = [m.to && `para ${m.to}`, m.cc && `cc ${m.cc}`].filter(Boolean).join(" · ");
+  return h("div", { class: "tmsg" },
+    h(many ? "button" : "div", { type: many ? "button" : null, class: "tmsg-head", onClick: many ? toggle : null },
+      h("div", { class: "top" }, h("strong", {}, who), h("span", { class: "mono" }, when(m.ts, { withTime: true }))),
+      h("span", { class: "mono addr" }, m.sent ? `${m.from_address} · Enviados` : m.from_address),
+      recipients && h("span", { class: "mono addr" }, recipients)),
+    h("div", { class: "body" }, linkify(m.body || "(mensagem sem texto)")),
+    m.attachments.map((a) => h("a", { class: "attach", href: `${API}${path}/attachments/${a.index}?folder=${enc(m.folder)}`, download: a.filename || "anexo" },
+      icon("file"), h("span", {}, a.filename || "anexo"), h("span", { class: "mono" }, size(a.size)))),
+    t.can.reply && many && !isLast && h("div", { class: "tmsg-actions" },
+      h("a", { class: "btn quiet small bare", href: replyHref("reply", t, m) }, "Responder"),
+      h("a", { class: "btn quiet small bare", href: replyHref("replyall", t, m) }, "Responder a todos"),
+      h("a", { class: "btn quiet small bare", href: replyHref("forward", t, m) }, "Encaminhar")));
+}
+
+function threadActions(t) {
+  const inbox = t.messages.filter((m) => !m.sent);
+  const newest = inbox[inbox.length - 1];
+  const flagged = inbox.some((m) => m.flagged);
+  const items = (uids) => uids.map((uid) => ({ mailbox: t.mailbox, uid }));
+  const leave = () => { clearThread(); go(listHref().slice(1)); };
+  const run = async (fn) => { try { await fn(); } catch (e) { toast(e.message); } render(); };
+  return {
+    flagged,
+    star: () => run(async () => {
+      if (!newest) return;
+      await batch(flagged ? "unflag" : "flag", items(flagged ? t.members : [newest.uid]), { folder: t.folder });
+      inbox.forEach((m) => (m.flagged = !flagged && m === newest));
+      rowsOf(t).forEach((r) => (r.flagged = !flagged));
+      if (flagged && state.view === "starred") state.list = state.list.filter((r) => !rowsOf(t).includes(r));
+    }),
+    unread: () => run(async () => {
+      if (!newest) return;
+      await batch("unseen", items([newest.uid]), { folder: t.folder });
+      rowsOf(t).forEach((r) => (r.unread = true));
+      refreshCounts();
+      leave();
+    }),
+    move: (action) => run(async () => {
+      const res = await batch(action, items(t.members), { folder: t.folder });
+      const gone = rowsOf(t);
+      state.list = state.list.filter((r) => !gone.includes(r));
+      toast(action === "archive" ? "Conversa arquivada." : `Movida para ${res.moved_to?.[t.mailbox] || "a lixeira"}.`);
+      refreshCounts();
+      leave();
+    }),
+  };
+}
+
 function messagePane() {
-  const m = state.msg;
-  const backTo = state.box === "all" ? "#/inbox" : `#/inbox/${encodeURIComponent(state.box)}`;
-  if (!m) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, state.msgKey ? "Abrindo…" : "Selecione uma mensagem."));
-  const path = `/messages/${encodeURIComponent(m.mailbox)}/${encodeURIComponent(m.uid)}`;
-  const markUnread = async () => {
-    await api(`${path}/seen`, { method: "POST", body: { seen: false } });
-    const row = state.list.find((x) => x.mailbox === m.mailbox && String(x.uid) === String(m.uid));
-    if (row) row.unread = true;
-    refreshCounts();
-    go(backTo.slice(1));
-  };
-  const trash = async () => {
-    const r = await api(`${path}/trash`, { method: "POST", body: {} });
-    state.list = state.list.filter((x) => !(x.mailbox === m.mailbox && String(x.uid) === String(m.uid)));
-    toast(`Movida para ${r.moved_to || "a lixeira"}.`);
-    refreshCounts();
-    go(backTo.slice(1));
-  };
-  const replyHref = `#/reply/${encodeURIComponent(m.mailbox)}/${encodeURIComponent(m.uid)}`;
-  return h("section", { class: "pane pane-detail", "aria-label": "Mensagem" },
+  const t = state.thread;
+  if (!t) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, state.threadKey ? "Abrindo…" : "Selecione uma mensagem."));
+  const msgs = t.messages;
+  const last = msgs[msgs.length - 1];
+  const opened = msgs.find((m) => m.opened) || last;
+  const a = threadActions(t);
+  const hasInbox = t.members.length > 0;
+  const iconBtn = (name, label, fn, on) => h("button", { type: "button", class: `icon-btn plain${on ? " on" : ""}`, "aria-label": label, title: label,
+    "aria-pressed": on === undefined ? null : on ? "true" : "false", onClick: fn }, icon(name));
+  // A function, not an array: the phone bar and the desktop bar each need their own nodes.
+  const tools = () => [
+    t.can.mark && hasInbox && iconBtn("star", a.flagged ? "Tirar a estrela" : "Marcar com estrela", a.star, a.flagged),
+    t.can.archive && hasInbox && iconBtn("archive", "Arquivar", () => a.move("archive")),
+    t.can.mark && hasInbox && iconBtn("mail", "Marcar como não lida", a.unread),
+    t.can.trash && hasInbox && iconBtn("trash", "Mover para a lixeira", () => a.move("trash")),
+  ];
+  return h("section", { class: "pane pane-detail", "aria-label": "Conversa" },
     h("div", { class: "detail-bar" },
-      h("a", { class: "back", href: backTo }, icon("back"), "Entrada"),
-      h("div", {},
-        m.can.mark && h("button", { class: "icon-btn plain", "aria-label": "Marcar como não lida", onClick: markUnread }, icon("mail")),
-        m.can.trash && h("button", { class: "icon-btn plain", "aria-label": "Mover para a lixeira", onClick: trash }, icon("trash")))),
+      h("a", { class: "back", href: listHref() }, icon("back"), state.view === "starred" ? "Com estrela" : "Entrada"),
+      h("div", { class: "bar-tools" }, tools())),
     h("div", { class: "detail-tools", hidden: true },
-      m.can.reply && h("a", { class: "btn small", href: replyHref }, "Responder"),
+      t.can.reply && h("a", { class: "btn small", href: replyHref("reply", t, last) }, icon("reply"), "Responder"),
+      t.can.reply && h("a", { class: "btn small ghost", href: replyHref("replyall", t, last) }, icon("replyAll"), "Responder a todos"),
+      t.can.reply && h("a", { class: "btn small ghost", href: replyHref("forward", t, last) }, icon("forward"), "Encaminhar"),
       h("span", { class: "spacer" }),
-      m.can.mark && h("button", { class: "btn small quiet", onClick: markUnread }, "Marcar como não lida"),
-      m.can.trash && h("button", { class: "btn small quiet", onClick: trash }, "Lixeira")),
-    h("div", { class: "scroll" },
+      tools()),
+    h("div", { class: "scroll", "data-key": `m:${state.threadKey}` },
       h("article", { class: "msg" },
         h("div", { class: "msg-head" },
-          h("h1", {}, m.subject || "(sem assunto)"),
-          h("div", { class: "who" }, h("strong", {}, m.from || m.from_address),
-            h("span", { class: "mono" }, `${m.from_address} → ${m.mailbox_address} · ${when(Date.parse(m.date) / 1000, { withTime: true })}`)),
-          m.agents.map((a) => h("span", { class: "agent-line" }, `${a.agent} ${a.what} ${when(a.ts, { withTime: true })}`))),
-        h("div", { class: "rule" }),
-        h("div", { class: "body" }, linkify(m.body || "(mensagem sem texto)")),
-        m.attachments.map((a) => h("a", { class: "attach", href: `${API}${path}/attachments/${a.index}`, download: a.filename || "anexo" },
-          icon("file"), h("span", {}, a.filename || "anexo"), h("span", { class: "mono" }, `${Math.max(1, Math.round(a.size / 1024))} KB`))))),
-    m.can.reply && h("div", { class: "detail-foot" }, h("a", { class: "btn", href: replyHref }, "Responder")),
+          h("h1", {}, opened.subject || "(sem assunto)"),
+          h("span", { class: "mono" }, msgs.length > 1 ? `${msgs.length} mensagens · ${t.mailbox_address}` : t.mailbox_address),
+          t.agents.map((x) => h("span", { class: "agent-line" }, `${x.agent} ${x.what} ${when(x.ts, { withTime: true })}`))),
+        h("div", { class: "thread" }, msgs.map((m, i) => threadMessageView(t, m, i === msgs.length - 1))))),
+    t.can.reply && h("div", { class: "detail-foot" },
+      h("a", { class: "btn", href: replyHref("reply", t, last) }, "Responder"),
+      h("a", { class: "icon-btn", href: replyHref("replyall", t, last), "aria-label": "Responder a todos" }, icon("replyAll")),
+      h("a", { class: "icon-btn", href: replyHref("forward", t, last), "aria-label": "Encaminhar" }, icon("forward"))),
   );
 }
+
+function size(bytes) {
+  if (!bytes) return "0 KB";
+  return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+// ── the editor ─────────────────────────────────────────────────────────────
 
 function composePane() {
   const d = state.draft;
   if (!d) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, "Abrindo…"));
   const sendable = state.me.mailboxes.filter((m) => m.smtp);
-  const replying = d.key.startsWith("reply:");
-  const options = (replying ? sendable.filter((m) => m.name === d.mailbox) : sendable).flatMap((m) =>
+  const answering = ["reply", "replyall"].includes(d.mode) || (d.mode === "draft" && d.in_reply_to);
+  const options = (answering ? sendable.filter((m) => m.name === d.mailbox) : sendable).flatMap((m) =>
     m.from_options.map((f, i) => ({ value: `${m.name}|${i === 0 ? "" : f}`, label: f })));
-  const bind = (field) => (e) => { d[field] = e.target.value; };
-  return h("section", { class: "pane pane-detail", "aria-label": replying ? "Resposta" : "Novo e-mail" },
+  const bind = (field) => (e) => { d[field] = e.target.value; touchDraft(); };
+  const title = { new: "Novo e-mail", reply: "Resposta", replyall: "Resposta a todos", forward: "Encaminhar", draft: "Rascunho" }[d.mode];
+  const field = (id, label, value, extra = {}) => h("div", { class: "field" }, h("label", { for: id }, label),
+    h("input", { id, value, onInput: bind(id), autocapitalize: id === "subject" ? null : "off", spellcheck: id === "subject" ? null : "false",
+      inputmode: id === "subject" ? null : "email", autocomplete: id === "subject" ? "off" : "email", ...extra }));
+  const files = h("input", { id: "files", type: "file", multiple: true, class: "sr", tabindex: "-1",
+    onChange: (e) => { addFiles([...e.target.files]).catch((err) => toast(err.message)); e.target.value = ""; } });
+  return h("section", { class: "pane pane-detail", "aria-label": title },
     h("div", { class: "compose-bar" },
-      h("button", { class: "btn quiet small", onClick: () => { state.draft = null; history.back(); } }, "Cancelar"),
-      h("strong", { class: "bar-title" }, replying ? "Resposta" : "Novo e-mail"),
-      h("button", { class: "btn small", disabled: state.busy, onClick: sendDraft }, state.busy ? "Enviando…" : "Enviar")),
-    h("div", { class: "scroll col" },
+      h("button", { type: "button", class: "btn quiet small", onClick: closeCompose }, "Fechar"),
+      h("strong", { class: "bar-title" }, title),
+      h("div", { class: "bar-tools" },
+        worthSaving(d) && h("button", { type: "button", class: d.confirmDiscard ? "btn quiet small danger" : "icon-btn plain",
+          "aria-label": "Descartar rascunho", title: "Descartar rascunho", onClick: discardDraft }, d.confirmDiscard ? "Descartar?" : icon("trash")),
+        h("button", { type: "button", class: "btn small", disabled: state.busy, onClick: sendDraft }, state.busy ? "Enviando…" : "Enviar"))),
+    h("div", { class: "scroll col", "data-key": `c:${d.key}` },
       h("div", { class: "field" }, h("label", { for: "from" }, "De"),
-        h("select", { id: "from", onChange: (e) => { const [box, from] = e.target.value.split("|"); d.mailbox = box; d.from = from; } },
+        h("select", { id: "from", onChange: (e) => changeFrom(e.target.value) },
           options.map((o) => h("option", { value: o.value, selected: o.value === `${d.mailbox}|${d.from}` ? true : null }, o.label)))),
       h("div", { class: "field" }, h("label", { for: "to" }, "Para"),
-        h("input", { id: "to", type: "email", multiple: true, value: d.to, autocomplete: "email", onInput: bind("to") })),
-      h("div", { class: "field" }, h("label", { for: "subject" }, "Assunto"),
-        h("input", { id: "subject", value: d.subject, onInput: bind("subject") })),
+        h("input", { id: "to", value: d.to, onInput: bind("to"), inputmode: "email", autocomplete: "email", autocapitalize: "off", spellcheck: "false" }),
+        !d.showCc && h("button", { type: "button", class: "btn quiet small bare", onClick: () => { d.showCc = true; render(); document.getElementById("cc")?.focus(); } }, "Cc Cco")),
+      d.showCc && field("cc", "Cc", d.cc),
+      d.showCc && field("bcc", "Cco", d.bcc),
+      field("subject", "Assunto", d.subject),
+      d.attachments.length > 0 && h("div", { class: "att-list" }, d.attachments.map((x, i) =>
+        h("span", { class: "att" }, icon("file"), h("span", { class: "att-name" }, x.filename), h("span", { class: "mono" }, size(x.size)),
+          h("button", { type: "button", class: "att-x", "aria-label": `Remover ${x.filename}`,
+            onClick: () => { d.attachments.splice(i, 1); touchDraft(); render(); } }, icon("close"))))),
       h("textarea", { id: "body", class: "editor", "aria-label": "Mensagem", onInput: bind("body") }, d.body),
-      h("p", { class: "note" }, replying ? `Vai na mesma conversa e fica salva em Enviados de ${boxByName(d.mailbox)?.address || ""}.` :
-        "Fica salva em Enviados da caixa escolhida.")),
+      h("div", { class: "compose-foot" },
+        files,
+        h("label", { for: "files", class: "btn ghost small" }, icon("clip"), "Anexar"),
+        h("span", { id: "draft-status", class: "mono" }, d.status)),
+      h("p", { class: "note" }, answering ? `Vai na mesma conversa e fica salva em Enviados de ${boxByName(d.mailbox)?.address || ""}.` :
+        "Fica salva em Enviados da caixa escolhida. Enquanto você escreve, o rascunho é salvo sozinho.")),
   );
 }
 
@@ -662,7 +1277,7 @@ function agentsPane() {
       h("div", { class: "seg", role: "group", "aria-label": "Filtrar" }, kinds.map(([k, label]) =>
         h("button", { type: "button", class: "chip", "aria-pressed": state.actKind === k ? "true" : "false",
           onClick: () => { state.actKind = k; loadActivity(); } }, label)))),
-    h("div", { class: "scroll ruled" },
+    h("div", { class: "scroll ruled", "data-key": "agents" },
       state.activity === null ? h("div", { class: "empty" }, "Carregando…") :
       !events.length ? h("div", { class: "empty" }, "Nenhuma atividade ainda.") :
       groups.map((g) => [h("h2", { class: "day" }, g.label), g.items.map((e) => {
@@ -692,7 +1307,7 @@ function settingsPane() {
   };
   return h("section", { class: "pane pane-detail", "aria-label": "Ajustes" },
     h("header", { class: "hdr" }, h("h1", { class: "title" }, "Ajustes")),
-    h("div", { class: "scroll padded" },
+    h("div", { class: "scroll padded", "data-key": "settings" },
       h("section", { class: "section first" },
         h("h2", {}, "Notificações"),
         h("div", { class: "box" },
@@ -714,6 +1329,20 @@ function settingsPane() {
             sw(p.notify[m.name], `Notificar ${m.address}`, () => savePrefs({ notify: { [m.name]: !p.notify[m.name] } })))),
           h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Avisar quando um agente enviar e-mail")),
             sw(p.notify_agent_send, "Avisar quando um agente enviar", () => savePrefs({ notify_agent_send: !p.notify_agent_send }))))),
+      p && h("section", { class: "section" },
+        h("h2", {}, "Leitura"),
+        h("div", { class: "plain" },
+          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Agrupar por conversa"),
+            h("span", { class: "detail" }, "Respostas ficam juntas na lista, e a conversa mostra o que você enviou.")),
+            sw(p.threads, "Agrupar por conversa", async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })))),
+      p && can("send") && Object.keys(p.signatures).length > 0 && h("section", { class: "section" },
+        h("h2", {}, "Assinaturas"),
+        h("div", { class: "plain" }, Object.keys(p.signatures).map((name) => h("div", { class: "item sig" },
+          h("label", { for: `sig-${name}`, class: "mono" }, boxByName(name)?.address || name),
+          h("textarea", { id: `sig-${name}`, class: "sig-text", rows: 3, maxlength: 2000, placeholder: "Sem assinatura",
+            onChange: async (e) => { await savePrefs({ signatures: { [name]: e.target.value } }); toast("Assinatura salva."); } },
+            p.signatures[name])))),
+        h("p", { class: "note tight" }, "Entra no fim de cada e-mail novo, resposta e encaminhamento dessa caixa.")),
       h("section", { class: "section" },
         h("h2", {}, "Passkeys"),
         h("div", { class: "plain" },
@@ -747,7 +1376,7 @@ function settingsPane() {
 function tabs(r) {
   const tab = (href, name, label, active) => h("a", { class: "tab", href, "aria-current": active ? "page" : null }, icon(name), label);
   return h("nav", { class: "tabs", "aria-label": "Seções" },
-    tab("#/inbox", "inbox", "Entrada", ["inbox", "m"].includes(r.name)),
+    tab("#/inbox", "inbox", "Entrada", LIST_VIEWS.includes(r.name) || r.name === "m"),
     tab("#/agents", "agents", "Agentes", r.name === "agents"),
     tab("#/settings", "settings", "Ajustes", r.name === "settings"));
 }
@@ -756,6 +1385,7 @@ function render() {
   const root = document.getElementById("app");
   const focused = document.activeElement?.id;
   const sel = focused && document.activeElement.selectionStart;
+  const scrolls = new Map([...document.querySelectorAll(".scroll[data-key]")].map((el) => [el.dataset.key, el.scrollTop]));
   root.replaceChildren();
   if (!state.authed) {
     document.body.dataset.view = "auth";
@@ -766,16 +1396,19 @@ function render() {
   const r = route();
   let detail;
   if (r.name === "m") detail = messagePane();
-  else if (r.name === "reply" || r.name === "compose") detail = composePane();
+  else if (COMPOSE_VIEWS.includes(r.name)) detail = composePane();
   else if (r.name === "agents") detail = agentsPane();
   else if (r.name === "settings") detail = settingsPane();
-  else detail = messagePane();
+  else detail = state.view === "drafts" ? h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, "Escolha um rascunho para continuar.")) : messagePane();
   document.body.dataset.view = ["agents", "settings"].includes(r.name) ? "page" :
-    ["m", "reply", "compose"].includes(r.name) ? "detail" : "list";
-  root.append(h("div", { class: "shell" }, sidebar(r), listPane(r), detail), tabs(r));
+    r.name === "m" || COMPOSE_VIEWS.includes(r.name) ? "detail" : "list";
+  document.body.dataset.selecting = state.selecting ? "1" : "";
+  root.append(h("div", { class: "shell" }, sidebar(r), listPane(), detail), tabs(r));
+  // Re-rendering replaces the nodes; keep the scroll positions and the caret.
+  document.querySelectorAll(".scroll[data-key]").forEach((el) => { if (scrolls.get(el.dataset.key)) el.scrollTop = scrolls.get(el.dataset.key); });
   if (focused) {
     const el = document.getElementById(focused);
-    if (el) { el.focus(); if (sel !== undefined && el.setSelectionRange) try { el.setSelectionRange(sel, sel); } catch (_) {} }
+    if (el) { el.focus({ preventScroll: true }); if (sel !== undefined && sel !== null && el.setSelectionRange) try { el.setSelectionRange(sel, sel); } catch (_) {} }
   }
 }
 
@@ -785,7 +1418,14 @@ async function boot() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" }).catch(() => {});
   window.addEventListener("hashchange", onRoute);
   WIDE.addEventListener("change", render);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && state.authed) { refreshCounts(); if (route().name === "inbox") loadList(true); } });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      // iOS may close a backgrounded app without warning: keep what was typed.
+      if (state.draft?.dirty) saveDraft(state.draft);
+      return;
+    }
+    if (state.authed) { refreshCounts(); if (LIST_VIEWS.includes(route().name) && state.view !== "drafts") loadList(true); }
+  });
   try {
     const s = await api("/auth/state");
     state.authed = s.authenticated;

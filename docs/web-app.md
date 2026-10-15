@@ -20,10 +20,16 @@ extra dependencies loaded.
 
 | Screen | What it does |
 |---|---|
-| Inbox | Every mailbox you can see, newest first, filter by mailbox, search. Each message shows which agent already read or answered it. |
-| Message | The body as clean text (HTML is converted, never rendered), attachments to download, the agents that touched it. Reply stays in the thread and is filed in Sent. |
+| Inbox | Every mailbox you can see, newest first, grouped by conversation, filter by mailbox, search, load older. Each row shows which agent already read or answered it. Also **Com estrela** (starred) and **Rascunhos** (drafts). |
+| Conversation | Every message of the thread, including what you sent (from Sent), oldest first; older ones fold to one line. Bodies as clean text (HTML is converted, never rendered), attachments to download, the agents that touched it. |
+| Writing | Reply, reply all, forward (attachments included), Cc and Bcc, attach files from the phone, a signature per mailbox. Replies stay in the thread and are filed in Sent. |
+| Drafts | What you write is saved to the mailbox's own Drafts folder a few seconds after you stop typing, so it also shows up in other mail apps. Closing the editor keeps it; opening and closing without writing leaves nothing behind. |
 | Agents | The audit trail as a timeline: reads, sends, trash moves, and every refusal — filter by sends or by refusals. |
 | Settings | Turn notifications on, pick which mailboxes notify, get a push when an agent sends mail, manage passkeys, see each agent's access. |
+
+Organizing works on one message or many: a star, read/unread, **archive** and
+trash. On the phone, swipe a row right to toggle read, left to archive, and
+hold it to select several; on a computer, **Selecionar** above the list.
 
 On a computer it becomes three columns: mailboxes, list, message.
 
@@ -158,6 +164,14 @@ Mail itself stays on your IMAP servers.
   audit log.
 - **Mail is text.** Bodies are rendered as text (links made clickable), HTML
   is never interpreted, attachments always download.
+- **Nothing is erased by surprise.** The trash and the archive are moves.
+  The one permanent delete is a superseded draft: saving a draft stores a new
+  version and erases the previous one, and the server refuses it for any
+  message not flagged `\Draft`.
+- **Scopes for the new actions.** Star, read/unread and archive need `mark`;
+  the trash needs `delete`; drafts need `send`. Forwarding an attachment needs
+  `read` on the mailbox it comes from. Attachments are capped at 25 MB per
+  message.
 - **Strict CSP**: nothing loads from other origins — fonts are bundled, no
   inline scripts or styles, no frames.
 - Agents' bearer tokens don't open the web app, and the web session doesn't

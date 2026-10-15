@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.8.0 — a fuller mail client
+
+The web app grew the basics a mail client is expected to have. Agents, MCP and REST are unchanged.
+
+- **Conversations.** The inbox groups messages by thread (Message-ID, In-Reply-To and References, so a reply that only names its parent still joins), and opening one shows the whole conversation, including your own messages from Sent, with older ones folded. Can be turned off in Ajustes.
+- **Writing.** Reply all (your own addresses left out), forward with the original attachments, Cc and Bcc, attach files from the device (25 MB per message), a signature per mailbox.
+- **Drafts** are saved to the mailbox's Drafts folder while you type and listed under Rascunhos; sending one removes it. Saving replaces the previous version, and only messages flagged `\Draft` can be erased that way.
+- **Organizing.** Stars and a Com estrela view, archive (creates "Archive" when the mailbox has none), read/unread and trash on one message, a whole conversation or a selection. On phones: swipe right for read/unread, left to archive, hold to select.
+- "Carregar mais antigas" pages back through the inbox.
+- Fixes: recipients with a display name ("Recepção <r@x>") went to SMTP with the name and failed on servers without SMTPUTF8; the envelope now carries bare addresses. A slow list response could replace a newer one when switching views quickly.
+
 ## v0.7.1
 
 - **Setup code.** `MAILGRANT_SETUP_CODE` (or `web.setup_code`) lets the first passkey be created by typing the code on the sign-in screen, without opening a terminal for `mailgrant invite`. It only works while no passkey exists, and is checked again when the passkey is saved.
