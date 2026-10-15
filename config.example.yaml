@@ -63,8 +63,11 @@ agents:
 #   # poll_seconds: 60                     # new-mail check for push
 #   # session_days: 30
 #   # push_contact: mailto:you@example.com
+#   # setup_code: ${MAILGRANT_SETUP_CODE}  # default; see below
 #
-# First sign-in: run `mailgrant invite` and open the link on your phone.
+# First sign-in: run `mailgrant invite` and open the link on your phone, or set
+# MAILGRANT_SETUP_CODE (12+ characters) and type it on the sign-in screen. The
+# code only works until the first passkey exists.
 
 # ── Mailboxes ──────────────────────────────────────────────────────────────
 # Each mailbox needs imap, smtp, or both. `name` is the handle used by the

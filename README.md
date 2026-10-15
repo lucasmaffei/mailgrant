@@ -79,8 +79,13 @@ web:
   user: {name: lucas, mailboxes: ["*"], scopes: [read, mark, delete, send]}
 ```
 
-Then `mailgrant invite` prints a one-time link: open it on your phone, create
-the passkey, add the app to the Home Screen and turn notifications on.
+Then create your first passkey, either way:
+
+- `mailgrant invite` prints a one-time link to open on your phone, or
+- set `MAILGRANT_SETUP_CODE` in the environment (12+ characters) and type it
+  on the sign-in screen. It only works until the first passkey exists.
+
+Then add the app to the Home Screen and turn notifications on.
 
 - **Turn it off** by removing the section or setting `enabled: false`. `/app`
   disappears and nothing is polled; agents are not affected.
@@ -114,7 +119,8 @@ docker compose up -d
 curl -s http://127.0.0.1:8000/health
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/whoami
 
-# 5. Web app only: a one-time link to create your passkey.
+# 5. Web app only: a one-time link to create your passkey
+#    (or set MAILGRANT_SETUP_CODE and type it on the sign-in screen).
 docker compose exec mailgrant mailgrant invite
 ```
 
@@ -197,6 +203,7 @@ the Seen flag stays as the humans left it.
 | `web.poll_seconds` | `60` | How often new mail is checked for push |
 | `web.session_days` | `30` | Sign-in lifetime on a device |
 | `web.push_contact` | origin | `mailto:` or `https:` contact for push services |
+| `web.setup_code` | `MAILGRANT_SETUP_CODE` | Code typed on the sign-in screen to create the first passkey; dead once one exists |
 
 ## Connecting agents
 

@@ -9,6 +9,7 @@ changing requests also need the X-Mailgrant header and a matching Origin.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +54,8 @@ from .store import Store, now
 SESSION_COOKIE = "mg_session"
 CSRF_HEADER = "x-mailgrant"
 INVITE_TTL = timedelta(minutes=30)
+# Stands in for an invite hash on a challenge started with web.setup_code.
+SETUP_MARK = "setup-code"
 MARK_WINDOW = timedelta(days=60)
 
 
@@ -118,12 +121,25 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
 
     # ── session & passkeys ────────────────────────────────────────────────
 
+    def setup_code_open() -> bool:
+        # The setup code only bootstraps: once any passkey exists it stops
+        # working, so a leaked .env can't add a device later.
+        return bool(web.setup_code) and not store.credentials()
+
+    def is_setup_code(value: str) -> bool:
+        return (
+            setup_code_open()
+            and web.setup_code is not None
+            and hmac.compare_digest(value.encode(), web.setup_code.encode())
+        )
+
     @router.get("/auth/state")
     def auth_state(request: Request) -> dict[str, Any]:
         token = request.cookies.get(SESSION_COOKIE)
         return {
             "authenticated": bool(token and store.session_valid(token)),
             "has_passkeys": bool(store.credentials()),
+            "setup_code": setup_code_open(),
             "user": web.user.name,
         }
 
@@ -133,8 +149,10 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
         invite = str(body.get("invite") or "")
         token = request.cookies.get(SESSION_COOKIE)
         signed_in = bool(token and store.session_valid(token))
-        # A signed-in person may add a device directly; anyone else needs an invite.
-        if not signed_in and not store.invite_valid(invite):
+        # A signed-in person may add a device directly; anyone else needs an
+        # invite, or the setup code while there is no passkey yet.
+        by_setup = not signed_in and is_setup_code(invite.strip())
+        if not signed_in and not by_setup and not store.invite_valid(invite):
             raise HTTPException(403, "invite missing, used or expired")
         options = generate_registration_options(
             rp_id=rp_id,
@@ -151,7 +169,11 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
                 for c in store.credentials()
             ],
         )
-        invite_hash = None if signed_in else hashlib.sha256(invite.encode()).hexdigest()
+        invite_hash = (
+            None
+            if signed_in
+            else SETUP_MARK if by_setup else hashlib.sha256(invite.encode()).hexdigest()
+        )
         cid = store.put_challenge("register", options.challenge, invite_hash)
         return {"challenge_id": cid, "options": json.loads(options_to_json(options))}
 
@@ -171,7 +193,10 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             )
         except Exception as e:  # noqa: BLE001 - library raises several types
             raise HTTPException(400, f"passkey not accepted: {e}") from e
-        if row["invite_hash"] is not None and not store.use_invite(row["invite_hash"]):
+        if row["invite_hash"] == SETUP_MARK:
+            if not setup_code_open():
+                raise HTTPException(403, "setup code no longer works: a passkey already exists")
+        elif row["invite_hash"] is not None and not store.use_invite(row["invite_hash"]):
             raise HTTPException(403, "invite already used or expired")
         transports = (body.get("credential") or {}).get("response", {}).get("transports") or []
         name = str(body.get("name") or "Passkey")[:60]
@@ -182,7 +207,13 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             name,
             [str(t) for t in transports],
         )
-        audit.record(web.user.name, "passkey_added", via_web=True, device=name)
+        audit.record(
+            web.user.name,
+            "passkey_added",
+            via_web=True,
+            device=name,
+            by="setup_code" if row["invite_hash"] == SETUP_MARK else None,
+        )
         open_session(response, request)
         return {"ok": True}
 

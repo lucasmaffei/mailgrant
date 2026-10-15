@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.1
+
+- **Setup code.** `MAILGRANT_SETUP_CODE` (or `web.setup_code`) lets the first passkey be created by typing the code on the sign-in screen, without opening a terminal for `mailgrant invite`. It only works while no passkey exists, and is checked again when the passkey is saved.
+- Invite tokens are hex. URL-safe tokens could end in `_` or `-`, which terminals and chat apps drop when they turn the URL into a link, and the invite then looked "used or expired".
+- Sign-up errors in the app are in Portuguese and say whether the invite or the code was wrong.
+
 ## v0.7.0 — the web app
 
 - **Optional web app** at `/app`, turned on by a `web:` section: unified inbox with mailbox filter and search, message reading (HTML shown as text), reply in thread and compose, mark read/unread, move to trash, attachments download, agent activity timeline, settings. Responsive: one column on phones, three on desktops. Interface in Brazilian Portuguese.

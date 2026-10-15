@@ -8,6 +8,7 @@ const WIDE = window.matchMedia("(min-width: 1000px)");
 const state = {
   authed: false,
   hasPasskeys: false,
+  setupCode: false,
   me: null,
   counts: {},
   total: 0,
@@ -89,7 +90,9 @@ async function api(path, { method = "GET", body } = {}) {
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || `Erro ${res.status}`);
+    const err = new Error(data.detail || `Erro ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -314,13 +317,13 @@ async function signIn() {
   }
 }
 
-async function register(deviceName) {
+async function register(deviceName, code = state.invite) {
   state.busy = true;
   render();
   try {
     const { challenge_id, options } = await api("/auth/register/options", {
       method: "POST",
-      body: { invite: state.invite || "" },
+      body: { invite: code || "" },
     });
     const cred = await navigator.credentials.create({
       publicKey: {
@@ -349,10 +352,13 @@ async function register(deviceName) {
       },
     });
     state.invite = null;
+    state.setupCode = false;
     toast("Passkey criada.");
     await afterSignIn();
   } catch (e) {
-    toast(e.name === "NotAllowedError" ? "Cadastro cancelado." : e.message);
+    toast(e.name === "NotAllowedError" ? "Cadastro cancelado."
+      : e.status === 403 ? (code === state.invite ? "Convite inválido, já usado ou vencido." : "Código de configuração errado.")
+      : e.message);
   } finally {
     state.busy = false;
     render();
@@ -459,7 +465,25 @@ async function sendDraft() {
 
 function authView() {
   const inviting = !!state.invite;
-  let nameInput;
+  // First device without an invite link: the setup code from the server's env.
+  const bySetup = !inviting && !state.hasPasskeys && state.setupCode;
+  let nameInput, codeInput;
+  if (bySetup) {
+    const submit = () => register(nameInput.value.trim() || guessDevice(), codeInput.value.trim());
+    return h("main", { class: "auth" },
+      h("div", {},
+        h("div", { class: "brand" }, "mailgrant", h("i", {}, ".")),
+        h("p", {}, "Primeiro acesso. Digite o código de configuração e crie a passkey deste aparelho."),
+      ),
+      h("form", { class: "actions", onSubmit: (e) => { e.preventDefault(); submit(); } },
+        (codeInput = h("input", { "aria-label": "Código de configuração", placeholder: "Código de configuração",
+          autocomplete: "one-time-code", autocapitalize: "off", spellcheck: "false", required: true })),
+        (nameInput = h("input", { "aria-label": "Nome deste aparelho", value: guessDevice(), maxlength: 60 })),
+        h("button", { class: "btn", type: "submit", disabled: state.busy }, icon("face"), "Criar passkey"),
+        h("p", { class: "foot" }, "O código é o MAILGRANT_SETUP_CODE do servidor. Ele para de valer quando a primeira passkey é criada."),
+      ),
+    );
+  }
   return h("main", { class: "auth" },
     h("div", {},
       h("div", { class: "brand" }, "mailgrant", h("i", {}, ".")),
@@ -766,6 +790,7 @@ async function boot() {
     const s = await api("/auth/state");
     state.authed = s.authenticated;
     state.hasPasskeys = s.has_passkeys;
+    state.setupCode = s.setup_code;
     if (state.authed) await loadMe();
   } catch (e) {
     toast(e.message);

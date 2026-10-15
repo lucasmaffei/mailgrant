@@ -80,8 +80,13 @@ web:
   user: {name: lucas, mailboxes: ["*"], scopes: [read, mark, delete, send]}
 ```
 
-Depois, `mailgrant invite` gera um link de uso único: abra no celular, crie a
-passkey, adicione o app à Tela de Início e ligue as notificações.
+Depois crie a primeira passkey, de um dos dois jeitos:
+
+- `mailgrant invite` gera um link de uso único para abrir no celular, ou
+- defina `MAILGRANT_SETUP_CODE` no ambiente (12 caracteres ou mais) e digite o
+  código na tela de entrada. Ele só vale até a primeira passkey existir.
+
+Aí adicione o app à Tela de Início e ligue as notificações.
 
 - **Para desligar**, tire a seção ou escreva `enabled: false`. O `/app` some e
   nada é vigiado; os agentes não são afetados.
@@ -114,7 +119,8 @@ docker compose up -d
 curl -s http://127.0.0.1:8000/health
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/whoami
 
-# 5. Só para o app web: um link de uso único para criar a sua passkey.
+# 5. Só para o app web: um link de uso único para criar a sua passkey
+#    (ou defina MAILGRANT_SETUP_CODE e digite o código na tela de entrada).
 docker compose exec mailgrant mailgrant invite
 ```
 
@@ -197,6 +203,7 @@ Ler nunca altera a mensagem: as pastas são abertas em modo somente leitura
 | `web.poll_seconds` | `60` | De quanto em quanto tempo procura e-mail novo para o push |
 | `web.session_days` | `30` | Por quanto tempo o aparelho fica conectado |
 | `web.push_contact` | origin | Contato `mailto:` ou `https:` para os serviços de push |
+| `web.setup_code` | `MAILGRANT_SETUP_CODE` | Código digitado na tela de entrada para criar a primeira passkey; para de valer quando ela existe |
 
 ## Conectando agentes
 

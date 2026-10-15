@@ -107,6 +107,8 @@ def _check(path: str | None) -> int:
             f"web app: on at {cfg.web.origin}/app for {p.name} [{', '.join(sorted(p.scopes))}]"
             f"  {boxes}; data in {cfg.web.data_dir}"
         )
+        if cfg.web.setup_code:
+            print("setup code: set (creates the first passkey; ignored once one exists)")
     else:
         print("web app: off (no `web:` section)")
     for m in cfg.mailboxes:

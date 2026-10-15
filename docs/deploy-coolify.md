@@ -151,8 +151,15 @@ To also read your mail on your phone (see [web-app.md](web-app.md)):
    ```
 
 3. Re-encode it into `MAILGRANT_CONFIG_B64` and **Restart**.
-4. **Terminal** tab of the application → `mailgrant invite`, and open the link
-   on your phone. Then add it to the Home Screen and turn notifications on.
+4. Create your first passkey, either way:
+   - add an environment variable `MAILGRANT_SETUP_CODE` (12+ characters,
+     e.g. `openssl rand -hex 12`), restart, open the domain on your phone and
+     type the code on the sign-in screen. It stops working once that passkey
+     exists; delete the variable afterwards; or
+   - **Terminal** tab of the application → `mailgrant invite`, and open the
+     link on your phone.
+
+   Then add it to the Home Screen and turn notifications on.
 
 To turn it off, remove the section (or `enabled: false`) and restart. The
 volume can stay; nothing reads it.

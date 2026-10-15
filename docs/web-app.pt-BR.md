@@ -60,11 +60,33 @@ mailgrant check
 
 ## A primeira passkey
 
-Ninguém entra antes de algum aparelho ter uma passkey, e a passkey só pode ser
-criada por um convite de uso único. No servidor:
+Ninguém entra antes de algum aparelho ter uma passkey. Há dois jeitos de criar
+a primeira: um código de configuração no ambiente, ou um link de convite.
+
+### Com código de configuração (sem terminal)
+
+Defina um código no ambiente, com 12 caracteres ou mais (no Coolify, uma
+variável de ambiente nova; no Compose, no `.env`):
 
 ```bash
-mailgrant invite            # vale 30 minutos, uma vez
+MAILGRANT_SETUP_CODE=$(openssl rand -hex 12)
+```
+
+Reinicie e abra o app: no lugar de "Entrar com passkey" ele pede o **Código de
+configuração**. Digite, confirme com Face ID / Touch ID, e você entrou.
+
+O código **só vale enquanto não existe passkey**. Assim que a primeira é
+criada, a tela volta ao normal e o código passa a ser recusado: um `.env`
+antigo não serve para cadastrar aparelho depois. Pode apagar a variável em
+seguida. `web.setup_code` no config faz o mesmo, e tem prioridade sobre a
+variável.
+
+### Com link de convite
+
+No servidor:
+
+```bash
+mailgrant invite            # vale 30 minutos, uma vez (--minutes muda)
 # https://mail.exemplo.com.br/app/#/invite/Lweu52CZ…
 ```
 
@@ -156,7 +178,9 @@ casos.
 
 | Sintoma | Causa |
 |---|---|
-| "invite missing, used or expired" | Convite vale uma vez, por 30 minutos. Rode `mailgrant invite` de novo. |
+| "Convite inválido, já usado ou vencido." | Convite vale uma vez, pelos minutos definidos (30 por padrão). Rode `mailgrant invite` de novo. |
+| "Código de configuração errado." | O código digitado não é o do `MAILGRANT_SETUP_CODE` (maiúsculas contam). |
+| A tela de entrada não pede código | Já existe passkey, ou a variável não chegou ao container: reinicie depois de criá-la. |
 | A passkey falha na hora | A página não está no `origin` configurado (outro endereço, ou http). |
 | Não aparece "Ativar notificações" no iPhone | Abra o app pelo ícone da Tela de Início, não pelo Safari. |
 | Um aparelho parou de receber | O serviço de push descartou a inscrição (app removido, permissão revogada). Ligue de novo nesse aparelho. |

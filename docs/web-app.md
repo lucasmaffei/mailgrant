@@ -62,11 +62,33 @@ mailgrant check
 
 ## Your first passkey
 
-Nobody can sign in until a device has a passkey, and a passkey can only be
-created through a one-time invite. On the server:
+Nobody can sign in until a device has a passkey. There are two ways to create
+the first one: a setup code from the environment, or a one-time invite link.
+
+### With a setup code (no terminal needed)
+
+Set a code in the environment, at least 12 characters (on Coolify, a new
+environment variable; with Compose, in `.env`):
 
 ```bash
-mailgrant invite            # valid 30 minutes, one use
+MAILGRANT_SETUP_CODE=$(openssl rand -hex 12)
+```
+
+Restart, open the app: instead of "Entrar com passkey" it asks for the
+**Código de configuração**. Type the code, confirm with Face ID / Touch ID, and
+you are in.
+
+The code **only works while there is no passkey**. As soon as the first one is
+created the screen goes back to normal and the code is refused, so an old
+`.env` can't be used to add a device later. You can delete the variable after
+that. `web.setup_code` in the config does the same, and wins over the variable.
+
+### With an invite link
+
+On the server:
+
+```bash
+mailgrant invite            # valid 30 minutes, one use (--minutes to change)
 # https://mail.example.com/app/#/invite/Lweu52CZ…
 ```
 
@@ -158,7 +180,9 @@ Restart. `/app` disappears, nothing is polled, the database is left untouched
 
 | Symptom | Cause |
 |---|---|
-| "invite missing, used or expired" | Invites work once, for 30 minutes. Run `mailgrant invite` again. |
+| "invite missing, used or expired" / "Convite inválido" | Invites work once, for the minutes given (30 by default). Run `mailgrant invite` again. |
+| "Código de configuração errado." | The typed code differs from `MAILGRANT_SETUP_CODE` (it is case-sensitive). |
+| No setup code field on the sign-in screen | A passkey already exists, or the variable didn't reach the container: restart after setting it. |
 | Passkey prompt fails right away | The page isn't on the configured `origin` (another host, or http). |
 | No "Ativar notificações" on iPhone | Open the app from the Home Screen icon, not from Safari. |
 | Notifications stop on one device | The push service dropped the subscription (app removed, permission revoked). Turn them on again on that device. |

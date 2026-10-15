@@ -143,7 +143,12 @@ def test_agents_still_need_their_token(web_client: TestClient) -> None:
 def test_api_needs_a_session(web_client: TestClient) -> None:
     assert web_client.get("/app/api/me").status_code == 401
     state = web_client.get("/app/api/auth/state").json()
-    assert state == {"authenticated": False, "has_passkeys": False, "user": "lucas"}
+    assert state == {
+        "authenticated": False,
+        "has_passkeys": False,
+        "setup_code": False,
+        "user": "lucas",
+    }
 
 
 def test_register_needs_a_valid_invite(web_client: TestClient) -> None:
@@ -172,6 +177,93 @@ def test_invite_registers_once_and_opens_a_session(
     web_client.cookies.clear()
     again = web_client.post("/app/api/auth/register/options", headers=H, json={"invite": invite})
     assert again.status_code == 403
+
+
+SETUP = "correct-horse-battery"
+
+
+def _fake_registration(monkeypatch: pytest.MonkeyPatch, cred: bytes) -> None:
+    monkeypatch.setattr(
+        "mailgrant.web.api.verify_registration_response",
+        Mock(
+            return_value=SimpleNamespace(
+                credential_id=cred, credential_public_key=b"pk", sign_count=0
+            )
+        ),
+    )
+
+
+def _register(client: TestClient, code: str) -> int:
+    opts = client.post("/app/api/auth/register/options", headers=H, json={"invite": code})
+    if opts.status_code != 200:
+        return opts.status_code
+    done = client.post(
+        "/app/api/auth/register/verify",
+        headers=H,
+        json={"challenge_id": opts.json()["challenge_id"], "name": "Mac", "credential": {}},
+    )
+    return done.status_code
+
+
+def test_setup_code_from_env_creates_only_the_first_passkey(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("mailgrant.web.watcher.Watcher.start", lambda self: False)
+    monkeypatch.setenv("MAILGRANT_SETUP_CODE", f"  {SETUP} ")
+    cfg = load_config(config_text(tmp_path, WEB))
+    assert cfg.web is not None and cfg.web.setup_code == SETUP
+    with TestClient(create_app(cfg), base_url=ORIGIN) as client:
+        assert client.get("/app/api/auth/state").json()["setup_code"] is True
+        _fake_registration(monkeypatch, b"cred-1")
+        assert _register(client, "wrong-code-123") == 403
+        assert _register(client, SETUP) == 200
+        assert client.get("/app/api/me").status_code == 200
+        # Once a passkey exists the code is dead, even for a fresh browser.
+        client.cookies.clear()
+        assert client.get("/app/api/auth/state").json()["setup_code"] is False
+        _fake_registration(monkeypatch, b"cred-2")
+        assert _register(client, SETUP) == 403
+    audit.clear_sinks()
+
+
+def test_setup_code_race_is_refused_at_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("mailgrant.web.watcher.Watcher.start", lambda self: False)
+    cfg = load_config(config_text(tmp_path, WEB + f"  setup_code: {SETUP}\n"))
+    with TestClient(create_app(cfg), base_url=ORIGIN) as client:
+        _fake_registration(monkeypatch, b"cred-1")
+        a = client.post("/app/api/auth/register/options", headers=H, json={"invite": SETUP})
+        b = client.post("/app/api/auth/register/options", headers=H, json={"invite": SETUP})
+        assert a.status_code == b.status_code == 200
+        body = {"name": "x", "credential": {}}
+        first = client.post(
+            "/app/api/auth/register/verify",
+            headers=H,
+            json={**body, "challenge_id": a.json()["challenge_id"]},
+        )
+        assert first.status_code == 200
+        client.cookies.clear()
+        _fake_registration(monkeypatch, b"cred-2")
+        second = client.post(
+            "/app/api/auth/register/verify",
+            headers=H,
+            json={**body, "challenge_id": b.json()["challenge_id"]},
+        )
+        assert second.status_code == 403
+    audit.clear_sinks()
+
+
+def test_setup_code_must_be_long(tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="at least 12"):
+        load_config(config_text(tmp_path, WEB + "  setup_code: short\n"))
+
+
+def test_invites_survive_being_linkified(web_client: TestClient) -> None:
+    from datetime import timedelta
+
+    token = web_client.store.create_invite(timedelta(minutes=5))  # type: ignore[attr-defined]
+    assert token.isalnum()
 
 
 def test_login_with_a_known_passkey(

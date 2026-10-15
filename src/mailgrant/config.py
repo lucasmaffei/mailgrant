@@ -155,7 +155,23 @@ class WebConfig(BaseModel):
     poll_seconds: int = Field(60, ge=15, le=3600)
     # Contact the push services may use (RFC 8292); defaults to the origin.
     push_contact: str | None = None
+    # Lets the first passkey be created by typing this code on the sign-in
+    # screen, instead of opening a `mailgrant invite` link. Only works while no
+    # passkey exists. Falls back to the MAILGRANT_SETUP_CODE environment variable.
+    setup_code: str | None = None
     user: WebUserConfig = Field(default_factory=WebUserConfig)
+
+    @model_validator(mode="after")
+    def _setup_code_from_env(self) -> WebConfig:
+        if self.setup_code is None:
+            self.setup_code = os.environ.get("MAILGRANT_SETUP_CODE") or None
+        if self.setup_code is not None:
+            self.setup_code = self.setup_code.strip()
+            if len(self.setup_code) < 12:
+                raise ValueError(
+                    "web.setup_code (or MAILGRANT_SETUP_CODE) must be at least 12 characters"
+                )
+        return self
 
     @field_validator("origin")
     @classmethod

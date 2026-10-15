@@ -136,7 +136,9 @@ class Store:
     # ── invites ───────────────────────────────────────────────────────────
 
     def create_invite(self, ttl: timedelta) -> str:
-        token = secrets.token_urlsafe(24)
+        # Hex, not urlsafe: a link ending in "_" or "-" loses that last
+        # character when a terminal or chat app turns it into a link.
+        token = secrets.token_hex(16)
         with self._conn() as db:
             db.execute(
                 "INSERT INTO invites (token_hash, created_at, expires_at) VALUES (?, ?, ?)",
