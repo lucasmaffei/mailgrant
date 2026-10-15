@@ -50,7 +50,9 @@ from ..imap_client import fetch_attachments
 from ..imap_client import fetch_message as imap_fetch
 from ..imap_client import fetch_thread, list_messages, mailbox_status
 from ..imap_client import mark_seen as imap_mark_seen
-from ..imap_client import message_ids, move_to, set_flags, special_folder
+from ..imap_client import message_ids, move_to
+from ..imap_client import search_messages as imap_search
+from ..imap_client import set_flags, special_folder
 from ..imap_client import unified_search as imap_unified_search
 from ..smtp_client import SmtpError, build_message
 from ..smtp_client import send as smtp_send
@@ -563,7 +565,7 @@ def build_router(
         mailbox: str | None = Query(None),
         q: str | None = Query(None, max_length=200),
         unseen: bool | None = Query(None),
-        view: str = Query("inbox", pattern="^(inbox|starred)$"),
+        view: str = Query("inbox", pattern="^(inbox|starred|sent)$"),
         limit: int = Query(40, ge=1, le=500),
     ) -> dict[str, Any]:
         try:
@@ -573,6 +575,8 @@ def build_router(
             raise HTTPException(403, str(e)) from e
         except NotFound as e:
             raise HTTPException(404, str(e)) from e
+        if view == "sent":
+            return sent_list(targets, q or None, limit)
         starred = view == "starred"
         result = imap_unified_search(
             targets, limit=limit, text=q or None, unseen=unseen, flagged=starred or None
@@ -583,6 +587,67 @@ def build_router(
         else:
             rows = [summary(m, read, replied) for m in result["messages"]]
         return {"messages": rows, "fetched": len(result["messages"]), "errors": result["errors"]}
+
+    def sent_list(targets: list[MailboxConfig], q: str | None, limit: int) -> dict[str, Any]:
+        """What went out of each mailbox, newest first, with who sent it.
+
+        Everything sent through mailgrant is filed in the mailbox's Sent folder
+        (smtp.save_copy_to), by agents and by the web app alike; mail sent from
+        other apps shows up too when they use the same folder.
+        """
+
+        def one(mb: MailboxConfig) -> tuple[MailboxConfig, str | None, list[dict], str | None]:
+            try:
+                folder = special(mb, "sent")
+                if folder is None:
+                    return mb, None, [], None
+                return (
+                    mb,
+                    folder,
+                    imap_search(imap_of(mb), folder=folder, limit=limit, text=q),
+                    None,
+                )
+            except (ImapError, OSError) as e:
+                return mb, None, [], str(e)
+
+        msgs, errors = [], []
+        with ThreadPoolExecutor(max_workers=max(1, len(targets))) as ex:
+            for mb, folder, found, err in ex.map(one, targets):
+                if err:
+                    errors.append({"mailbox": mb.name, "error": err})
+                for m in found:
+                    m.update(mailbox=mb.name, mailbox_address=address(mb), folder=folder)
+                    msgs.append(m)
+        by = store.senders([m.get("message_id") or "" for m in msgs])
+        rows = []
+        for m in msgs:
+            try:
+                ts = parsedate_to_datetime(m.get("date") or "").timestamp()
+            except (TypeError, ValueError):
+                ts = 0
+            to = getaddresses([m.get("to") or ""])
+            sender = by.get(m.get("message_id") or "")
+            rows.append(
+                {
+                    "uid": m.get("uid"),
+                    "mailbox": m["mailbox"],
+                    "mailbox_address": m["mailbox_address"],
+                    "folder": m["folder"],
+                    "to": [n or a for n, a in to if a],
+                    "subject": m.get("subject") or "",
+                    "date": m.get("date"),
+                    "ts": ts,
+                    "unread": False,
+                    "flagged": "\\Flagged" in (m.get("flags") or []),
+                    "message_id": m.get("message_id"),
+                    "sent_by": sender[0] if sender and sender[1] == "agent" else None,
+                    "by_you": bool(sender and sender[1] == "person"),
+                    "count": 1,
+                    "members": [str(m.get("uid"))],
+                }
+            )
+        rows.sort(key=lambda r: r["ts"], reverse=True)
+        return {"messages": rows[:limit], "fetched": len(rows), "errors": errors}
 
     @router.get("/messages/{name}/{uid}")
     def message(
@@ -736,6 +801,7 @@ def build_router(
         mb = mailbox(who, name, "read", "get_message", uid=uid)
         imap = imap_of(mb)
         here = folder or imap.default_folder
+        sent_folder = special(mb, "sent")
         try:
             msgs = fetch_thread(
                 imap,
@@ -766,7 +832,7 @@ def build_router(
                 {
                     "uid": str(m["uid"]),
                     "folder": m["folder"],
-                    "sent": m["folder"] != here,
+                    "sent": m["folder"] == sent_folder,
                     "opened": m["folder"] == here and str(m["uid"]) == uid,
                     "from": sender or sender_addr,
                     "from_address": sender_addr,
@@ -790,7 +856,8 @@ def build_router(
             "mailbox_address": address(mb),
             "folder": here,
             "messages": out,
-            "members": [m["uid"] for m in out if not m["sent"]],
+            # The messages the toolbar acts on: the ones in the folder it was opened from.
+            "members": [m["uid"] for m in out if m["folder"] == here],
             "agents": history,
             "can": {
                 "reply": who.has("send") and mb.smtp is not None,

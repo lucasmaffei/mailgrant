@@ -54,8 +54,8 @@ body[data-view="detail"] .tabs, body[data-selecting="1"] .tabs { display: none; 
 .tab svg { width: 20px; height: 20px; }
 
 @media (min-width: 1000px) {
-  .shell { display: grid; grid-template-columns: 232px 380px minmax(0, 1fr); }
-  body[data-view="page"] .shell { grid-template-columns: 232px minmax(0, 1fr); }
+  .shell { display: grid; grid-template-columns: 264px 380px minmax(0, 1fr); }
+  body[data-view="page"] .shell { grid-template-columns: 264px minmax(0, 1fr); }
   .side { display: flex; flex-direction: column; gap: 18px; padding: 22px 12px; border-right: 1px solid var(--line); overflow-y: auto; }
   .pane-list { border-right: 1px solid var(--line); }
   body[data-view="list"] .pane-detail, body[data-view="detail"] .pane-list { display: flex; }
@@ -302,5 +302,33 @@ a.link-item:hover { background: rgba(255, 255, 255, 0.015); }
 .test.ok { color: var(--accent); }
 .test.bad { color: var(--warn); }
 .reveal code.link { font-size: 13px; color: var(--text); }
-.snippet { margin: 0; padding: 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-snippet { margin: 0; padding: 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ── the phone's side menu ─────────────────────────────────────────────── */
+
+.hdr-title { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.menu-btn { margin-left: -10px; }
+.menu-btn svg { width: 22px; height: 22px; }
+.hdr { padding-top: calc(var(--top) + 6px); }
+.scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.55); }
+.side.drawer { display: flex; flex-direction: column; gap: 18px; position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(300px, 84vw); padding: calc(var(--top) + 10px) 12px calc(16px + var(--bottom)); overflow-y: auto; background: var(--bg); border-right: 1px solid var(--line); }
+.side.drawer .wordmark { display: flex; align-items: center; justify-content: space-between; }
+.side.drawer a { height: 40px; font-size: 15px; }
+.side.drawer .side-compose { height: 44px; }
+.by-agent { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .side.drawer { animation: drawer-in 180ms ease-out; }
+  .scrim { animation: fade-in 180ms ease-out; }
+}
+@keyframes drawer-in { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (min-width: 1000px) {
+  .menu-btn { display: none; }
+  .hdr { padding-top: 22px; }
+}
+
+/* Addresses are the point of the sidebar: wrap a long one instead of cutting it. */
+.side nav a { height: auto; min-height: 30px; padding-top: 5px; padding-bottom: 5px; }
+.side nav a span:first-child { white-space: normal; overflow-wrap: anywhere; }
+.side.drawer nav a { min-height: 40px; }
 

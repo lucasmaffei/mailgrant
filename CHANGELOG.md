@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.1
+
+- **Enviados**: what went out of every mailbox's Sent folder, with who sent it (you, or which agent, from the audit log). Opening a sent message shows the conversation, replies from the inbox included.
+- A side menu on phones (the button at the top of the list, Agentes and Ajustes), the same as the computer's sidebar.
+- Mailbox tabs and the sidebar show whole addresses; long ones wrap instead of being cut.
+- Fix: replying in a conversation of three or more messages failed. The References header comes folded over several lines and was passed along with the line breaks, which the header-injection check refuses; ids are now read on one line.
+- Fix: the tap that ends a long press no longer toggles the row that lands under the finger after the list redraws.
+
 ## v0.9.0 — manage mailboxes and agents in the app
 
 - **`web.manage: true`** moves mailboxes and agents into the web app's database. The first start imports them from the config; after that the file's `mailboxes` and `agents` are ignored and every change in **Ajustes** applies at once on every worker, without a restart (each request checks a config version, at most once a second).

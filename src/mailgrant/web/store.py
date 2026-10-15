@@ -397,6 +397,20 @@ class Store:
                 (iso(since),),
             ).fetchall()
 
+    def senders(self, message_ids: list[str]) -> dict[str, tuple[str, str]]:
+        """message_id -> (who sent it, "agent" or "person"), for the Sent view."""
+        ids = [m for m in message_ids if m]
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        with self._conn() as db:
+            rows = db.execute(
+                f"SELECT message_id, agent, via FROM audit WHERE action = 'send' "
+                f"AND outcome = 'ok' AND message_id IN ({marks})",
+                ids,
+            ).fetchall()
+        return {r["message_id"]: (r["agent"], r["via"]) for r in rows}
+
     # ── mailboxes and agents managed from the web app ─────────────────────
 
     def managed_rows(self, kind: str) -> list[sqlite3.Row]:

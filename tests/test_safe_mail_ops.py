@@ -238,3 +238,17 @@ def test_thread_search_covers_every_id() -> None:
     assert crit.count("OR") == 5
     assert crit.count('"<a@x>"') == 3 and crit.count('"<b@y>"') == 3
     assert imap_client.message_ids("<a@x> <b@y>", "<a@x>", None) == ["<a@x>", "<b@y>"]
+
+
+def test_folded_references_come_back_on_one_line() -> None:
+    raw = (
+        b"From: a@x.org\r\nSubject: Re: s\r\nMessage-ID: <c@x>\r\n"
+        b"In-Reply-To: <b@x>\r\nReferences: <a@x>\r\n <b@x>\r\n\r\nbody\r\n"
+    )
+    msg = imap_client._serialize_message(email.message_from_bytes(raw), uid="1")
+    assert msg["references"] == "<a@x> <b@x>"
+    # ... so a reply built from it passes the header-injection check.
+    built = smtp_client.build_message(
+        "u@x.org", ["a@x.org"], "Re: s", "ok", in_reply_to="<c@x>", references=msg["references"]
+    )
+    assert built["References"] == "<a@x> <b@x>"

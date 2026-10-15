@@ -18,7 +18,8 @@ nenhum banco, nenhuma dependência extra carregada.
 
 | Tela | O que faz |
 |---|---|
-| Entrada | Todas as caixas que você pode ver, das mais novas para as mais antigas, agrupadas por conversa, com filtro por caixa, busca e "carregar mais antigas". Cada linha mostra qual agente já leu ou respondeu. Também **Com estrela** e **Rascunhos**. |
+| Entrada | Todas as caixas que você pode ver, das mais novas para as mais antigas, agrupadas por conversa, com filtro por caixa, busca e "carregar mais antigas". Cada linha mostra qual agente já leu ou respondeu. Também **Com estrela**, **Enviados** e **Rascunhos**. |
+| Enviados | O que saiu da pasta Enviados de cada caixa, do mais novo para o mais antigo, com quem enviou: você ou o agente ("hermes enviou"). Abrir um mostra a conversa inteira, com as respostas. |
 | Conversa | Todas as mensagens da conversa, inclusive o que você enviou (vindo de Enviados), da mais antiga para a mais nova; as antigas ficam recolhidas numa linha. O corpo em texto limpo (o HTML é convertido, nunca interpretado), anexos para baixar, os agentes que mexeram nela. |
 | Escrever | Responder, responder a todos, encaminhar (com os anexos), Cc e Cco, anexar arquivos do celular, uma assinatura por caixa. Respostas entram na mesma conversa e ficam em Enviados. |
 | Rascunhos | O que você escreve é salvo na pasta Rascunhos da própria caixa alguns segundos depois que você para de digitar, então aparece também em outros apps de e-mail. Fechar o editor guarda o rascunho; abrir e fechar sem escrever não deixa nada. |
@@ -30,7 +31,9 @@ Organizar funciona em uma mensagem ou em várias: estrela, lida/não lida,
 como lida ou não lida, para a esquerda para arquivar, e segure para selecionar
 várias; no computador, **Selecionar** acima da lista.
 
-No computador vira três colunas: caixas, lista e mensagem.
+No celular, o botão de menu no topo abre o mesmo menu lateral do computador:
+visões, caixas, Agentes e Ajustes. No computador vira três colunas: caixas,
+lista e mensagem.
 
 ![O app web no computador](assets/desktop.png)
 

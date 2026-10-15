@@ -36,6 +36,7 @@ const state = {
   invite: null,
   push: { supported: false, subscribed: false },
   busy: false,
+  drawer: false,
   admin: null,
   form: null,
   reveal: null,
@@ -79,6 +80,7 @@ const ICONS = {
   clip: '<path d="m20 11.5-8.2 8.2a5 5 0 0 1-7-7L13 4.5a3.4 3.4 0 0 1 4.8 4.8l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   check: '<path d="m5 12 4.5 4.5L19 7"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
 };
 
 function icon(name) {
@@ -181,12 +183,12 @@ const standalone = () =>
   window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
 const boxByName = (name) => state.me?.mailboxes.find((m) => m.name === name);
-const shortAddr = (a) => (a || "").replace(/\.(com|com\.br|link|net|org|dev)$/, "");
 const SCOPE_WORDS = { read: "lê", mark: "marca", delete: "apaga", send: "envia" };
 
 // ── routing ───────────────────────────────────────────────────────────────
 
-const LIST_VIEWS = ["inbox", "starred", "drafts"];
+const LIST_VIEWS = ["inbox", "starred", "sent", "drafts"];
+const VIEW_TITLES = { inbox: "Entrada", starred: "Com estrela", sent: "Enviados", drafts: "Rascunhos" };
 const COMPOSE_VIEWS = ["compose", "reply", "replyall", "forward", "draft"];
 
 function route() {
@@ -198,6 +200,7 @@ const enc = encodeURIComponent;
 
 function listHref() {
   if (state.view === "starred") return "#/starred";
+  if (state.view === "sent") return "#/sent";
   if (state.view === "drafts") return "#/drafts";
   return state.box === "all" ? "#/inbox" : `#/inbox/${enc(state.box)}`;
 }
@@ -209,13 +212,16 @@ async function onRoute() {
     if (!state.authed) return render();
   }
   if (!state.authed) return render();
+  state.drawer = false;
   // Leaving the editor keeps what was written: it is saved as a draft.
   if (state.draft && !COMPOSE_VIEWS.includes(r.name)) await leaveDraft();
   if (!LIST_VIEWS.includes(r.name) && r.name !== "m" && state.selecting) stopSelecting(false);
   try {
-    if (r.name === "inbox" || r.name === "starred") {
+    if (r.name === "inbox" || r.name === "starred" || r.name === "sent") {
       const box = r.name === "inbox" ? r.args[0] || "all" : "all";
       if (state.view !== r.name || state.box !== box) stopSelecting(false);
+      // Rows of another view have another shape (Sent rows list recipients).
+      if (state.view !== r.name) { state.list = []; state.listKey = null; }
       state.view = r.name;
       state.box = box;
       clearThread();
@@ -441,11 +447,12 @@ function stopSelecting(redraw = true) {
   if (redraw) render();
 }
 
-// The tap that ends a long press lands on the freshly drawn row; it must not unselect it.
-let gesture = { key: null, at: 0 };
+// Lifting the finger after a long press produces a tap on whatever row is
+// under it once the list is redrawn; that tap must not toggle anything.
+let gesture = { pressed: false, at: 0 };
 
 function toggleSelect(key) {
-  if (key === gesture.key && Date.now() - gesture.at < 600) return;
+  if (gesture.pressed || Date.now() - gesture.at < 400) return;
   state.selected.has(key) ? state.selected.delete(key) : state.selected.add(key);
   render();
 }
@@ -916,17 +923,19 @@ function authView() {
   );
 }
 
-function sidebar(r) {
+function sidebar(r, drawer = false) {
   const boxes = state.me.mailboxes.filter((m) => m.imap);
   const inList = LIST_VIEWS.includes(r.name) || r.name === "m";
   const at = (view, box = "all") => inList && state.view === view && (view !== "inbox" || state.box === box) ? "page" : null;
-  return h("aside", { class: "side" },
-    h("div", { class: "wordmark" }, "mailgrant", h("i", {}, ".")),
+  return h("aside", { class: drawer ? "side drawer" : "side", "aria-label": "Menu" },
+    h("div", { class: "wordmark" }, h("span", {}, "mailgrant", h("i", {}, ".")),
+      drawer && h("button", { type: "button", class: "icon-btn plain drawer-close", "aria-label": "Fechar menu", onClick: () => { state.drawer = false; render(); } }, icon("close"))),
     can("send") && h("a", { href: "#/compose", class: "btn small side-compose" }, "Escrever"),
     h("nav", { "aria-label": "Pastas" },
       h("a", { href: "#/inbox", "aria-current": at("inbox") },
         h("span", {}, "Todas as caixas"), state.total ? h("span", { class: "count" }, state.total) : null),
       h("a", { href: "#/starred", "aria-current": at("starred") }, h("span", {}, "Com estrela")),
+      h("a", { href: "#/sent", "aria-current": at("sent") }, h("span", {}, "Enviados")),
       can("send") && h("a", { href: "#/drafts", "aria-current": at("drafts") }, h("span", {}, "Rascunhos"))),
     h("nav", { "aria-label": "Caixas" },
       h("span", { class: "side-label" }, "Caixas"),
@@ -958,7 +967,7 @@ function attachGestures(wrap, row, m) {
       if (!active || swiping) return;
       active = false;
       row._gestureAt = Date.now();
-      gesture = { key: rowKey(m), at: row._gestureAt };
+      gesture = { pressed: true, at: row._gestureAt };
       navigator.vibrate?.(10);
       startSelecting(rowKey(m));
     }, 550);
@@ -983,6 +992,7 @@ function attachGestures(wrap, row, m) {
   });
   const end = () => {
     clearTimeout(press);
+    if (gesture.pressed) gesture = { pressed: false, at: Date.now() };
     if (!active) return;
     active = false;
     if (!swiping) return;
@@ -993,7 +1003,12 @@ function attachGestures(wrap, row, m) {
     else settle();
   };
   wrap.addEventListener("pointerup", end);
-  wrap.addEventListener("pointercancel", () => { clearTimeout(press); if (active && swiping) settle(); active = false; });
+  wrap.addEventListener("pointercancel", () => {
+    clearTimeout(press);
+    if (gesture.pressed) gesture = { pressed: false, at: Date.now() };
+    if (active && swiping) settle();
+    active = false;
+  });
 }
 
 function rowView(m) {
@@ -1026,6 +1041,22 @@ function rowView(m) {
   return wrap;
 }
 
+function sentRow(m) {
+  const rcpts = m.to || [];
+  const to = rcpts.length ? `Para ${rcpts[0]}${rcpts.length > 1 ? ` +${rcpts.length - 1}` : ""}` : "(sem destinatário)";
+  const by = m.sent_by ? `${m.sent_by} enviou` : m.by_you ? "você" : null;
+  return h("a", { class: "row", href: `#/m/${enc(m.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`,
+    "aria-current": state.threadKey === `${m.mailbox}/${m.folder}/${m.uid}` ? "true" : null },
+    h("div", { class: "top" }, h("span", { class: "from" }, to), h("span", { class: "mono" }, when(m.ts))),
+    h("span", { class: "subject" }, m.subject || "(sem assunto)"),
+    h("span", { class: "mono" }, by ? [m.mailbox_address, " · ", h("span", { class: m.sent_by ? "by-agent" : null }, by)] : m.mailbox_address));
+}
+
+function menuButton() {
+  return h("button", { type: "button", class: "icon-btn plain menu-btn", "aria-label": "Abrir menu",
+    onClick: () => { state.drawer = true; render(); } }, icon("menu"));
+}
+
 function draftRow(d) {
   return h("a", { class: "row", href: `#/draft/${enc(d.mailbox)}/${enc(d.uid)}`,
     "aria-current": state.draft?.key === `draft:${d.mailbox}/${d.uid}` ? "true" : null },
@@ -1054,9 +1085,10 @@ function listPane() {
   let search;
   const doSearch = () => { state.q = search.value.trim(); state.limit = 40; loadList(true); };
   const unreadHere = state.box === "all" ? state.total : state.counts[state.box] || 0;
-  const title = state.view === "starred" ? "Com estrela" : drafts ? "Rascunhos" :
-    current ? current.address : WIDE.matches ? "Todas as caixas" : "Entrada";
-  const sub = state.view === "starred" ? plural(state.list.length, "1 mensagem", "# mensagens") :
+  const sent = state.view === "sent";
+  const title = state.view === "inbox" ? (current ? current.address : WIDE.matches ? "Todas as caixas" : "Entrada") : VIEW_TITLES[state.view];
+  const sub = sent ? "Por você e pelos agentes, em todas as caixas" :
+    state.view === "starred" ? plural(state.list.length, "1 mensagem", "# mensagens") :
     drafts ? plural((state.drafts || []).length, "1 rascunho", "# rascunhos") :
     `${unreadHere} não lidas · ${boxes.length} caixas`;
   const n = state.selected.size;
@@ -1070,9 +1102,9 @@ function listPane() {
           state.selected = n === state.list.length ? new Set() : new Set(state.list.map(rowKey)); render(); } },
           n === state.list.length && n ? "Nenhuma" : "Todas"))
     : h("div", { class: "hdr-row" },
-        h("div", {}, h("h1", { class: "title" }, title), h("div", { class: "sub" }, sub)),
+        h("div", { class: "hdr-title" }, menuButton(), h("div", {}, h("h1", { class: "title" }, title), h("div", { class: "sub" }, sub))),
         h("div", { class: "hdr-actions" },
-          !drafts && can("mark") && state.list.length > 0 && h("button", { type: "button", class: "btn quiet small", onClick: () => startSelecting() }, "Selecionar"),
+          !drafts && !sent && can("mark") && state.list.length > 0 && h("button", { type: "button", class: "btn quiet small", onClick: () => startSelecting() }, "Selecionar"),
           can("send") && h("a", { href: "#/compose", class: "icon-btn", "aria-label": "Escrever e-mail" }, icon("pencil"))));
   return h("section", { class: "pane pane-list", "aria-label": "Mensagens" },
     h("header", { class: "hdr" },
@@ -1083,8 +1115,9 @@ function listPane() {
       !state.selecting && h("div", { class: "chips", role: "group", "aria-label": "Filtrar" },
         chip("Todas", "#/inbox", state.view === "inbox" && state.box === "all", state.total),
         chip("Com estrela", "#/starred", state.view === "starred"),
+        chip("Enviados", "#/sent", sent),
         can("send") && chip("Rascunhos", "#/drafts", drafts),
-        boxes.map((m) => chip(shortAddr(m.address), `#/inbox/${enc(m.name)}`, state.view === "inbox" && state.box === m.name, state.counts[m.name])))),
+        boxes.map((m) => chip(m.address, `#/inbox/${enc(m.name)}`, state.view === "inbox" && state.box === m.name, state.counts[m.name])))),
     h("div", { class: "scroll", "data-key": `list:${state.view}|${state.box}|${state.q}` },
       state.listErrors.map((e) => h("div", { class: "err" }, `${e.mailbox}: ${e.error}`)),
       drafts ? (
@@ -1093,8 +1126,9 @@ function listPane() {
         h("div", { class: "rows" }, state.drafts.map(draftRow))
       ) : (
         state.loadingList && !state.list.length ? h("div", { class: "empty" }, "Carregando…") :
-        !state.list.length ? h("div", { class: "empty" }, state.q ? "Nada encontrado." : state.view === "starred" ? "Nenhuma mensagem com estrela." : "Nenhuma mensagem aqui.") :
-        h("div", { class: "rows" }, state.list.map(rowView))
+        !state.list.length ? h("div", { class: "empty" }, state.q ? "Nada encontrado." : state.view === "starred" ? "Nenhuma mensagem com estrela." :
+          sent ? "Nada enviado ainda. O que você e os agentes enviarem aparece aqui." : "Nenhuma mensagem aqui.") :
+        h("div", { class: "rows" }, state.list.map(sent ? sentRow : rowView))
       ),
       !drafts && state.fetched >= state.limit && h("button", { class: "more", onClick: () => { state.limit += 40; loadList(true); } },
         state.loadingList ? "Carregando…" : "Carregar mais antigas"),
@@ -1136,7 +1170,7 @@ function threadMessageView(t, m, isLast) {
 }
 
 function threadActions(t) {
-  const inbox = t.messages.filter((m) => !m.sent);
+  const inbox = t.messages.filter((m) => m.folder === t.folder);
   const newest = inbox[inbox.length - 1];
   const flagged = inbox.some((m) => m.flagged);
   const items = (uids) => uids.map((uid) => ({ mailbox: t.mailbox, uid }));
@@ -1188,7 +1222,7 @@ function messagePane() {
   ];
   return h("section", { class: "pane pane-detail", "aria-label": "Conversa" },
     h("div", { class: "detail-bar" },
-      h("a", { class: "back", href: listHref() }, icon("back"), state.view === "starred" ? "Com estrela" : "Entrada"),
+      h("a", { class: "back", href: listHref() }, icon("back"), VIEW_TITLES[state.view] || "Entrada"),
       h("div", { class: "bar-tools" }, tools())),
     h("div", { class: "detail-tools", hidden: true },
       t.can.reply && h("a", { class: "btn small", href: replyHref("reply", t, last) }, icon("reply"), "Responder"),
@@ -1290,7 +1324,7 @@ function agentsPane() {
   }
   return h("section", { class: "pane pane-detail", "aria-label": "Agentes" },
     h("header", { class: "hdr" },
-      h("div", {}, h("h1", { class: "title" }, "Agentes"), h("div", { class: "sub" }, "O que cada um leu, marcou e enviou")),
+      h("div", { class: "hdr-title" }, menuButton(), h("div", {}, h("h1", { class: "title" }, "Agentes"), h("div", { class: "sub" }, "O que cada um leu, marcou e enviou"))),
       h("div", { class: "seg", role: "group", "aria-label": "Filtrar" }, kinds.map(([k, label]) =>
         h("button", { type: "button", class: "chip", "aria-pressed": state.actKind === k ? "true" : "false",
           onClick: () => { state.actKind = k; loadActivity(); } }, label)))),
@@ -1323,7 +1357,7 @@ function settingsPane() {
     render();
   };
   return h("section", { class: "pane pane-detail", "aria-label": "Ajustes" },
-    h("header", { class: "hdr" }, h("h1", { class: "title" }, "Ajustes")),
+    h("header", { class: "hdr" }, h("div", { class: "hdr-title" }, menuButton(), h("h1", { class: "title" }, "Ajustes"))),
     h("div", { class: "scroll padded", "data-key": "settings" },
       state.me.manage && manageSections(),
       h("section", { class: "section" + (state.me.manage ? "" : " first") },
@@ -1615,7 +1649,7 @@ function revealBox(r) {
     h("div", { class: "btn-row" },
       h("button", { class: "btn small", onClick: () => copy(r.token, "Token copiado.") }, "Copiar token"),
       h("button", { class: "btn ghost small", onClick: () => copy(snippet(r), "Configuração copiada.") }, "Copiar configuração MCP")),
-    h("pre", { class: "snippet" }, snippet(r)));
+    h("pre", { class: "mcp-snippet" }, snippet(r)));
 }
 
 function formField(id, label, value, onInput, extra = {}) {
@@ -1787,6 +1821,9 @@ function render() {
     r.name === "m" || COMPOSE_VIEWS.includes(r.name) ? "detail" : "list";
   document.body.dataset.selecting = state.selecting ? "1" : "";
   root.append(h("div", { class: "shell" }, sidebar(r), listPane(), detail), tabs(r));
+  if (state.drawer && !WIDE.matches) {
+    root.append(h("div", { class: "scrim", onClick: () => { state.drawer = false; render(); } }), sidebar(r, true));
+  }
   // Re-rendering replaces the nodes; keep the scroll positions and the caret.
   document.querySelectorAll(".scroll[data-key]").forEach((el) => { if (scrolls.get(el.dataset.key)) el.scrollTop = scrolls.get(el.dataset.key); });
   if (focused) {
@@ -1801,6 +1838,11 @@ async function boot() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" }).catch(() => {});
   window.addEventListener("hashchange", onRoute);
   WIDE.addEventListener("change", render);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.drawer) { state.drawer = false; render(); } });
+  // The row that saw a long press start is gone after the redraw: watch the release here.
+  const released = () => { if (gesture.pressed) gesture = { pressed: false, at: Date.now() }; };
+  document.addEventListener("pointerup", released, true);
+  document.addEventListener("pointercancel", released, true);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       // iOS may close a backgrounded app without warning: keep what was typed.

@@ -1,6 +1,6 @@
 [project]
 name = "mailgrant"
-version = "0.9.0"
+version = "0.9.1"
 description = "One email gateway for many AI agents: per-token mailboxes and scopes over MCP and REST."
 readme = "README.md"
 license = { text = "MIT" }

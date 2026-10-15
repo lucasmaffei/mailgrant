@@ -118,6 +118,12 @@ def _decode(s: Any) -> str:
         return str(s)
 
 
+def _one_line(value: Any) -> str:
+    """Header values that hold ids: long References are folded over several
+    lines, and a reply must carry them on one."""
+    return " ".join(_decode(value).split())
+
+
 def _select(conn: imaplib.IMAP4, folder: str, readonly: bool = False) -> None:
     _reject_control_chars(folder, "folder")
     # Send the name as a properly-escaped IMAP quoted string so an embedded
@@ -400,9 +406,9 @@ def _parse_header_fetch(fdata: list[Any]) -> list[dict[str, Any]]:
                 "to": _decode(msg.get("To")),
                 "subject": _decode(msg.get("Subject")),
                 "date": _decode(msg.get("Date")),
-                "message_id": _decode(msg.get("Message-ID")),
-                "in_reply_to": _decode(msg.get("In-Reply-To")),
-                "references": _decode(msg.get("References")),
+                "message_id": _one_line(msg.get("Message-ID")),
+                "in_reply_to": _one_line(msg.get("In-Reply-To")),
+                "references": _one_line(msg.get("References")),
             }
         )
     return out
@@ -498,9 +504,9 @@ def _serialize_message(
         "reply_to": _decode(msg.get("Reply-To")),
         "subject": _decode(msg.get("Subject")),
         "date": _decode(msg.get("Date")),
-        "message_id": _decode(msg.get("Message-ID")),
-        "references": _decode(msg.get("References")),
-        "in_reply_to": _decode(msg.get("In-Reply-To")),
+        "message_id": _one_line(msg.get("Message-ID")),
+        "references": _one_line(msg.get("References")),
+        "in_reply_to": _one_line(msg.get("In-Reply-To")),
         "body_text": body_text,
         "body_html": body_html,
         "body_reader": body_reader,
@@ -868,7 +874,9 @@ def fetch_thread(
         }
         if ids and related:
             sent = _find_special(conn, "sent", sent_folder)
-            for f in dict.fromkeys([folder] + ([sent] if sent else [])):
+            # Opened from Sent, the replies are in the inbox: look there too.
+            others = [sent, cfg.default_folder]
+            for f in dict.fromkeys([folder] + [o for o in others if o]):
                 _select(conn, f, readonly=True)
                 uids = [u.decode() for u in _uid_search(conn, _thread_criteria(ids))][-limit:]
                 uids = [u for u in uids if (f, u) not in found]

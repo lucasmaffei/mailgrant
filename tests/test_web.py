@@ -695,3 +695,38 @@ def test_attachments_are_checked(web_client: TestClient, monkeypatch: pytest.Mon
     r = web_client.post("/app/api/send", headers=H, json={**base, "attachments": big})
     assert r.status_code == 413
     send.assert_not_called()
+
+
+def test_sent_view_says_who_sent_it(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    monkeypatch.setattr("mailgrant.web.api.special_folder", lambda cfg, kind: "Sent")
+    sent = [
+        {
+            "uid": "3",
+            "to": "Ana <ana@x.org>, b@x.org",
+            "subject": "Re: Oi",
+            "flags": ["\\Seen"],
+            "date": "Tue, 14 Oct 2026 11:00:00 -0300",
+            "message_id": "<s3@x>",
+        },
+        {
+            "uid": "2",
+            "to": "c@x.org",
+            "subject": "Proposta",
+            "flags": ["\\Seen"],
+            "date": "Tue, 14 Oct 2026 10:00:00 -0300",
+            "message_id": "<s2@x>",
+        },
+    ]
+    search = Mock(side_effect=lambda imap, folder, limit, text: [dict(m) for m in sent])
+    monkeypatch.setattr("mailgrant.web.api.imap_search", search)
+    audit.record("hermes", "send", mailbox="alpha", to=["ana@x.org"], message_id="<s3@x>")
+    audit.record("lucas", "send", mailbox="alpha", to=["c@x.org"], message_id="<s2@x>")
+    rows = web_client.get("/app/api/inbox?view=sent&mailbox=alpha").json()["messages"]
+    assert [(r["uid"], r["folder"], r["to"], r["sent_by"], r["by_you"]) for r in rows] == [
+        ("3", "Sent", ["Ana", "b@x.org"], "hermes", False),
+        ("2", "Sent", ["c@x.org"], None, True),
+    ]
+    assert search.call_args.kwargs["folder"] == "Sent"

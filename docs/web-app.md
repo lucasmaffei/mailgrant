@@ -20,7 +20,8 @@ extra dependencies loaded.
 
 | Screen | What it does |
 |---|---|
-| Inbox | Every mailbox you can see, newest first, grouped by conversation, filter by mailbox, search, load older. Each row shows which agent already read or answered it. Also **Com estrela** (starred) and **Rascunhos** (drafts). |
+| Inbox | Every mailbox you can see, newest first, grouped by conversation, filter by mailbox, search, load older. Each row shows which agent already read or answered it. Also **Com estrela** (starred), **Enviados** (sent) and **Rascunhos** (drafts). |
+| Sent | What left every mailbox's Sent folder, newest first, marked with who sent it: you, or the agent ("hermes enviou"). Opening one shows the whole conversation, replies included. |
 | Conversation | Every message of the thread, including what you sent (from Sent), oldest first; older ones fold to one line. Bodies as clean text (HTML is converted, never rendered), attachments to download, the agents that touched it. |
 | Writing | Reply, reply all, forward (attachments included), Cc and Bcc, attach files from the phone, a signature per mailbox. Replies stay in the thread and are filed in Sent. |
 | Drafts | What you write is saved to the mailbox's own Drafts folder a few seconds after you stop typing, so it also shows up in other mail apps. Closing the editor keeps it; opening and closing without writing leaves nothing behind. |
@@ -31,7 +32,9 @@ Organizing works on one message or many: a star, read/unread, **archive** and
 trash. On the phone, swipe a row right to toggle read, left to archive, and
 hold it to select several; on a computer, **Selecionar** above the list.
 
-On a computer it becomes three columns: mailboxes, list, message.
+On a phone, the menu button at the top opens the same side menu a computer
+shows: views, mailboxes, Agentes and Ajustes. On a computer it becomes three
+columns: mailboxes, list, message.
 
 ![The web app on a computer](assets/desktop.png)
 
