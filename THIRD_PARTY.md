@@ -17,5 +17,6 @@ Used only when the `web:` section is configured.
 | --- | --- | --- | --- | --- |
 | [py_webauthn](https://github.com/duo-labs/py_webauthn) | runtime dependency | BSD-3-Clause | https://github.com/duo-labs/py_webauthn | Passkey registration and sign-in. |
 | [pywebpush](https://github.com/web-push-libs/pywebpush) | runtime dependency | MPL-2.0 | https://github.com/web-push-libs/pywebpush | Web Push delivery; used unmodified. |
+| [cryptography](https://github.com/pyca/cryptography) | runtime dependency | Apache-2.0 OR BSD-3-Clause | https://github.com/pyca/cryptography | Encrypts mailbox passwords managed in the web app (Fernet). |
 | [Inter](https://github.com/rsms/inter), [Inter Tight](https://github.com/rsms/inter) | bundled font | SIL OFL 1.1 | https://github.com/rsms/inter | `src/mailgrant/web/static/fonts/`, latin subset from Google Fonts. |
 | [Geist Mono](https://github.com/vercel/geist-font) | bundled font | SIL OFL 1.1 | https://github.com/vercel/geist-font | `src/mailgrant/web/static/fonts/`, latin subset from Google Fonts. |

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 DEFAULT_CONFIG_PATH = "/etc/mailgrant/config.yaml"
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -159,6 +159,10 @@ class WebConfig(BaseModel):
     # screen, instead of opening a `mailgrant invite` link. Only works while no
     # passkey exists. Falls back to the MAILGRANT_SETUP_CODE environment variable.
     setup_code: str | None = None
+    # Manage mailboxes and agents from the web app. They then live in the
+    # database (imported from this file the first time) and the `mailboxes`
+    # and `agents` sections here are ignored.
+    manage: bool = False
     user: WebUserConfig = Field(default_factory=WebUserConfig)
 
     @model_validator(mode="after")
@@ -209,6 +213,13 @@ class Config(BaseModel):
     agents: list[AgentConfig] = Field(default_factory=list)
     web: WebConfig | None = None
     mailboxes: list[MailboxConfig] = Field(default_factory=list)
+    # Set by the web app when it manages mailboxes and agents: brings this
+    # object up to date with changes saved by any worker.
+    _refresh: Any = PrivateAttr(default=None)
+
+    def refresh(self) -> None:
+        if self._refresh is not None:
+            self._refresh()
 
     @model_validator(mode="after")
     def _unique_names(self) -> "Config":
@@ -251,6 +262,10 @@ class Config(BaseModel):
     @property
     def web_enabled(self) -> bool:
         return self.web is not None and self.web.enabled
+
+    @property
+    def managed(self) -> bool:
+        return self.web_enabled and self.web is not None and self.web.manage
 
     def get(self, name: str) -> MailboxConfig | None:
         for m in self.mailboxes:

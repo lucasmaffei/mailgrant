@@ -91,6 +91,8 @@ Aí adicione o app à Tela de Início e ligue as notificações.
 - **Para desligar**, tire a seção ou escreva `enabled: false`. O `/app` some e
   nada é vigiado; os agentes não são afetados.
 - Você recebe permissão como um agente, então um celular só de leitura é uma linha.
+- Se você quiser (`manage: true`), ele também gerencia as caixas e as
+  permissões e tokens de cada agente, na hora, pedindo a passkey a cada mudança.
 - É um cliente de e-mail de verdade: conversas, responder a todos, encaminhar,
   Cc/Cco, anexos, rascunhos salvos na pasta Rascunhos da caixa, assinaturas,
   estrela, arquivar, ações em lote e gestos de deslizar no celular.
@@ -206,6 +208,7 @@ Ler nunca altera a mensagem: as pastas são abertas em modo somente leitura
 | `web.poll_seconds` | `60` | De quanto em quanto tempo procura e-mail novo para o push |
 | `web.session_days` | `30` | Por quanto tempo o aparelho fica conectado |
 | `web.push_contact` | origin | Contato `mailto:` ou `https:` para os serviços de push |
+| `web.manage` | `false` | Gerenciar caixas e agentes pelo app; pede `MAILGRANT_SECRET_KEY`. Veja [docs/web-app.pt-BR.md](docs/web-app.pt-BR.md#gerenciar-caixas-e-agentes-pelo-app-opcional) |
 | `web.setup_code` | `MAILGRANT_SETUP_CODE` | Código digitado na tela de entrada para criar a primeira passkey; para de valer quando ela existe |
 
 ## Conectando agentes

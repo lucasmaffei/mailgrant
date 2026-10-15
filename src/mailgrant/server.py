@@ -145,6 +145,9 @@ class _BearerASGI:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
+        # Mailboxes and agents managed from the web app may have changed in
+        # another worker; this is cheap (one version check, at most per second).
+        self._cfg.refresh()
         path = scope.get("path", "")
         # The web app authenticates people with passkey sessions, not bearer
         # tokens; its own router checks every /app/api call.
@@ -172,8 +175,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     )
     audit.configure(cfg.audit_log)
 
-    mcp_manager = build_session_manager(cfg)
     web_hooks: list[tuple[Any, Any]] = []
+    mcp_manager: Any = None
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -193,13 +196,16 @@ def create_app(config: Config | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
 
-    app.router.routes.append(Mount(_MCP_PATH, app=mcp_manager.handle_request))
-
     if cfg.web_enabled:
         # Imported only here: an MCP-only instance never loads the web stack.
         from .web import mount as mount_web
 
+        # Before the MCP server: with web.manage the mailboxes come from the
+        # web app's database, and the tool list depends on them.
         web_hooks.append(mount_web(app, cfg))
+
+    mcp_manager = build_session_manager(cfg)
+    app.router.routes.append(Mount(_MCP_PATH, app=mcp_manager.handle_request))
 
     app.add_middleware(_MCPSlashNormalizer)
     app.add_middleware(_BearerASGI, cfg=cfg)

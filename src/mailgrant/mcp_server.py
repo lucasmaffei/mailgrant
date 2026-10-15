@@ -190,16 +190,20 @@ def _build_tools(
 
     handlers["mailboxes"] = _mailboxes
 
+    # Mailboxes managed from the web app can appear while running, so every
+    # tool is registered up front; each one still checks the mailbox it gets.
+    live = cfg.managed
+
     # ── Unified inbox ────────────────────────────────────────────────────
-    if any(mb.imap is not None for mb in cfg.mailboxes):
+    if live or any(mb.imap is not None for mb in cfg.mailboxes):
         _register_unified(cfg, tools, handlers)
 
     # ── IMAP ops (only if at least one mailbox has IMAP) ─────────────────
-    if any(mb.imap is not None for mb in cfg.mailboxes):
+    if live or any(mb.imap is not None for mb in cfg.mailboxes):
         _register_imap_tools(cfg, tools, handlers)
 
     # ── SMTP ops (only if at least one mailbox has SMTP) ─────────────────
-    if any(mb.smtp is not None for mb in cfg.mailboxes):
+    if live or any(mb.smtp is not None for mb in cfg.mailboxes):
         _register_smtp_tools(cfg, tools, handlers)
 
     return tools, handlers

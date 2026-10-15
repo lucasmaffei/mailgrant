@@ -54,6 +54,7 @@ from ..imap_client import message_ids, move_to, set_flags, special_folder
 from ..imap_client import unified_search as imap_unified_search
 from ..smtp_client import SmtpError, build_message
 from ..smtp_client import send as smtp_send
+from .managed import Managed
 from .push import Pusher
 from .store import Store, now
 
@@ -79,9 +80,13 @@ _CTYPE_RE = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 # Stands in for an invite hash on a challenge started with web.setup_code.
 SETUP_MARK = "setup-code"
 MARK_WINDOW = timedelta(days=60)
+# How long a passkey check counts for sensitive changes (mailboxes, agents).
+CONFIRM_WINDOW = timedelta(minutes=5)
 
 
-def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
+def build_router(
+    cfg: Config, store: Store, pusher: Pusher, managed: Managed | None = None
+) -> APIRouter:
     assert cfg.web is not None
     web = cfg.web
     origin = web.origin
@@ -107,6 +112,12 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
         if not token or not store.session_valid(token):
             raise HTTPException(401, "not signed in")
         return web_principal(cfg)
+
+    def confirmed(request: Request) -> None:
+        """Sensitive changes need a passkey check from the last few minutes."""
+        token = request.cookies.get(SESSION_COOKIE) or ""
+        if not store.session_confirmed(token, CONFIRM_WINDOW):
+            raise HTTPException(403, "confirm")
 
     def open_session(response: Response, request: Request) -> None:
         token = store.create_session(web.session_days, request.headers.get("user-agent"))
@@ -353,6 +364,44 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
         open_session(response, request)
         return {"ok": True}
 
+    @router.post("/auth/confirm/options")
+    def confirm_options(request: Request, who: Principal = Depends(person)) -> dict[str, Any]:
+        options = generate_authentication_options(
+            rp_id=rp_id,
+            user_verification=UserVerificationRequirement.REQUIRED,
+            allow_credentials=[
+                PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["id"]))
+                for c in store.credentials()
+            ],
+        )
+        cid = store.put_challenge("confirm", options.challenge)
+        return {"challenge_id": cid, "options": json.loads(options_to_json(options))}
+
+    @router.post("/auth/confirm/verify")
+    def confirm_verify(
+        request: Request, body: dict = Body(...), who: Principal = Depends(person)
+    ) -> dict:
+        row = store.take_challenge(str(body.get("challenge_id") or ""), "confirm")
+        credential = body.get("credential") or {}
+        cred = store.credential(str(credential.get("id") or ""))
+        if row is None or cred is None:
+            raise HTTPException(401, "passkey not recognized")
+        try:
+            verified = verify_authentication_response(
+                credential=credential,
+                expected_challenge=row["challenge"],
+                expected_rp_id=rp_id,
+                expected_origin=origin,
+                credential_public_key=cred["public_key"],
+                credential_current_sign_count=cred["sign_count"],
+                require_user_verification=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(401, f"passkey not accepted: {e}") from e
+        store.touch_credential(cred["id"], verified.new_sign_count)
+        store.confirm_session(request.cookies.get(SESSION_COOKIE) or "")
+        return {"ok": True}
+
     @router.post("/auth/logout")
     def logout(request: Request, response: Response) -> dict:
         same_origin(request)
@@ -490,6 +539,7 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             "scopes": sorted(who.scopes),
             "mailboxes": boxes,
             "version": __version__,
+            "manage": managed is not None,
         }
 
     @router.get("/counts")
@@ -1068,6 +1118,12 @@ def build_router(cfg: Config, store: Store, pusher: Pusher) -> APIRouter:
             }
         )
         return {"sent": sent}
+
+    if managed is not None:
+        from .admin import build_admin_router
+
+        managed.on_change.append(special_cache.clear)
+        router.include_router(build_admin_router(cfg, managed, person, confirmed))
 
     return router
 

@@ -161,6 +161,13 @@ To also read your mail on your phone (see [web-app.md](web-app.md)):
 
    Then add it to the Home Screen and turn notifications on.
 
+**Manage mailboxes and agents in the app** (optional): add `manage: true`
+to the `web:` section and an environment variable `MAILGRANT_SECRET_KEY`
+(`openssl rand -hex 32`), then redeploy. The first start imports the
+config's mailboxes and agents; afterwards change them in **Ajustes**, and
+`MAILGRANT_CONFIG_B64` only needs `web:` and the global settings. Keep the
+secret key: without it the saved mailbox passwords can't be read.
+
 To turn it off, remove the section (or `enabled: false`) and restart. The
 volume can stay; nothing reads it.
 

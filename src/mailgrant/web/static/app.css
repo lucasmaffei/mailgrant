@@ -288,3 +288,19 @@ textarea.editor { flex: 1; min-height: 260px; width: 100%; padding: 18px 20px; b
 .link-btn { padding: 0; color: var(--accent); }
 .bare { padding: 0; }
 .note.tight { margin-top: 0; }
+
+/* ── managing mailboxes and agents ─────────────────────────────────────── */
+
+.field input.short { flex: none; width: 72px; }
+.field select { flex: 1; min-width: 0; height: 40px; background: transparent; border: 0; outline: none; color: var(--text); font-size: 15px; }
+.field input:disabled { color: var(--muted); }
+a.link-item { color: var(--text); text-decoration: none; }
+a.link-item:hover { background: rgba(255, 255, 255, 0.015); }
+.padded-x { padding: 0 20px; align-items: center; }
+.bar-spacer { width: 56px; }
+.test { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.test.ok { color: var(--accent); }
+.test.bad { color: var(--warn); }
+.reveal code.link { font-size: 13px; color: var(--text); }
+.snippet { margin: 0; padding: 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+

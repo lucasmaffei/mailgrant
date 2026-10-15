@@ -63,6 +63,9 @@ agents:
 #   # poll_seconds: 60                     # new-mail check for push
 #   # session_days: 30
 #   # push_contact: mailto:you@example.com
+#   # manage: true                         # manage mailboxes and agents in the app
+#                                          # (set MAILGRANT_SECRET_KEY; imports the
+#                                          # lists below on first start, then ignores them)
 #   # setup_code: ${MAILGRANT_SETUP_CODE}  # default; see below
 #
 # First sign-in: run `mailgrant invite` and open the link on your phone, or set

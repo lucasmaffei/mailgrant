@@ -79,6 +79,7 @@ class Watcher:
 
     def check_once(self) -> list[dict[str, Any]]:
         """One round over every mailbox; returns the notifications it sent."""
+        self.cfg.refresh()
         notify = self.store.get_pref("notify", {})
         fresh: list[tuple[Any, dict[str, Any]]] = []
         for mb in self.mailboxes():

@@ -985,9 +985,10 @@ wheels = [
 
 [[package]]
 name = "mailgrant"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "html2text" },
     { name = "mcp" },
@@ -1015,6 +1016,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = "==50.0.0" },
     { name = "fastapi", specifier = "==0.136.1" },
     { name = "html2text", specifier = "==2024.2.26" },
     { name = "mcp", specifier = "==1.28.1" },

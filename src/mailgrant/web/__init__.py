@@ -70,10 +70,16 @@ def mount(app: FastAPI, cfg: Config) -> tuple[Callable[[], None], Callable[[], N
     """Attach the web app to `app`; returns (start, stop) for the lifespan."""
     assert cfg.web is not None
     store = Store(cfg.web.data_dir)
+    managed = None
+    if cfg.managed:
+        from .managed import Managed
+
+        managed = Managed(cfg, store)
+        managed.bootstrap()
     pusher = Pusher(store, cfg.web.push_contact or cfg.web.origin)
     watcher = Watcher(cfg, store, pusher)
 
-    app.include_router(build_router(cfg, store, pusher))
+    app.include_router(build_router(cfg, store, pusher, managed))
     app.add_middleware(_AppHeaders)
 
     def page(name: str, media_type: str | None = None, **headers: str):

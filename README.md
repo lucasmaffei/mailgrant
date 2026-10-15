@@ -90,6 +90,8 @@ Then add the app to the Home Screen and turn notifications on.
 - **Turn it off** by removing the section or setting `enabled: false`. `/app`
   disappears and nothing is polled; agents are not affected.
 - The person is granted like an agent, so a read-only phone is one line.
+- Optionally (`manage: true`) it also manages the mailboxes and each agent's
+  permissions and tokens, live, with the passkey asked again for every change.
 - It is a real mail client: conversations, reply all, forward, Cc/Bcc,
   attachments, drafts saved to the mailbox's Drafts folder, signatures, stars,
   archive, batch actions and swipe gestures on the phone.
@@ -206,6 +208,7 @@ the Seen flag stays as the humans left it.
 | `web.poll_seconds` | `60` | How often new mail is checked for push |
 | `web.session_days` | `30` | Sign-in lifetime on a device |
 | `web.push_contact` | origin | `mailto:` or `https:` contact for push services |
+| `web.manage` | `false` | Manage mailboxes and agents in the app; needs `MAILGRANT_SECRET_KEY`. See [docs/web-app.md](docs/web-app.md#manage-mailboxes-and-agents-in-the-app-optional) |
 | `web.setup_code` | `MAILGRANT_SETUP_CODE` | Code typed on the sign-in screen to create the first passkey; dead once one exists |
 
 ## Connecting agents

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.0 — manage mailboxes and agents in the app
+
+- **`web.manage: true`** moves mailboxes and agents into the web app's database. The first start imports them from the config; after that the file's `mailboxes` and `agents` are ignored and every change in **Ajustes** applies at once on every worker, without a restart (each request checks a config version, at most once a second).
+- Add, edit and remove mailboxes, with **Testar conexão** (IMAP login and folder list, SMTP login). Passwords are encrypted at rest with `MAILGRANT_SECRET_KEY` (or a key file in `data_dir`), never sent back to the browser, and kept when a form leaves them blank.
+- Create agents, choose their mailboxes (or all, including future ones) and scopes, issue a new token (shown once, with a ready MCP configuration), remove them. Only token hashes are stored.
+- Every change needs a passkey check from the last five minutes; the app asks for Face ID / Touch ID again.
+- **Baixar config** exports the current config as YAML, passwords included.
+- With `manage` on, every MCP tool is registered up front, since mailboxes can appear while running.
+- `mailgrant check` says when `manage` is on.
+
 ## v0.8.0 — a fuller mail client
 
 The web app grew the basics a mail client is expected to have. Agents, MCP and REST are unchanged.

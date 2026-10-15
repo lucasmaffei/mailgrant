@@ -78,11 +78,11 @@ def _validate_uid(uid: str) -> None:
 
 
 @contextmanager
-def _connect(cfg: ImapConfig) -> Iterator[imaplib.IMAP4]:
+def _connect(cfg: ImapConfig, timeout: float | None = None) -> Iterator[imaplib.IMAP4]:
     if cfg.tls == "ssl":
-        conn: imaplib.IMAP4 = imaplib.IMAP4_SSL(cfg.host, cfg.port)
+        conn: imaplib.IMAP4 = imaplib.IMAP4_SSL(cfg.host, cfg.port, timeout=timeout)
     else:
-        conn = imaplib.IMAP4(cfg.host, cfg.port)
+        conn = imaplib.IMAP4(cfg.host, cfg.port, timeout=timeout)
     try:
         if cfg.tls == "starttls":
             conn.starttls()
@@ -151,6 +151,12 @@ def _list(conn: imaplib.IMAP4) -> list[tuple[str, set[str]]]:
     if typ != "OK":
         raise ImapError("LIST failed")
     return _parse_list(data)
+
+
+def check_login(cfg: ImapConfig, timeout: float = 15) -> list[str]:
+    """Log in and list the folders: proof that the settings work."""
+    with _connect(cfg, timeout=timeout) as conn:
+        return [name for name, _ in _list(conn)]
 
 
 def list_folders(cfg: ImapConfig) -> list[str]:

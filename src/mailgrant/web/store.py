@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS audit (
     in_reply_to TEXT,
     fields TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS managed_mailboxes (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS managed_agents (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
 CREATE INDEX IF NOT EXISTS audit_target ON audit (mailbox, uid);
 CREATE INDEX IF NOT EXISTS audit_reply ON audit (in_reply_to);
@@ -113,6 +123,9 @@ class Store:
                 with self._conn() as db:
                     db.execute("PRAGMA journal_mode=WAL")
                     db.executescript(SCHEMA)
+                    cols = {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}
+                    if "confirmed_at" not in cols:  # added in 0.9
+                        db.execute("ALTER TABLE sessions ADD COLUMN confirmed_at TEXT")
                 break
             except sqlite3.OperationalError as e:
                 if "locked" not in str(e) or attempt == 49:
@@ -257,6 +270,21 @@ class Store:
             db.execute("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", (iso(now()), h))
         return True
 
+    def confirm_session(self, token: str) -> None:
+        """Record a fresh passkey check on this session (for sensitive changes)."""
+        with self._conn() as db:
+            db.execute(
+                "UPDATE sessions SET confirmed_at = ? WHERE token_hash = ?",
+                (iso(now()), digest(token)),
+            )
+
+    def session_confirmed(self, token: str, within: timedelta) -> bool:
+        with self._conn() as db:
+            row = db.execute(
+                "SELECT confirmed_at FROM sessions WHERE token_hash = ?", (digest(token),)
+            ).fetchone()
+        return bool(row and row["confirmed_at"] and row["confirmed_at"] > iso(now() - within))
+
     def end_session(self, token: str) -> None:
         with self._conn() as db:
             db.execute("DELETE FROM sessions WHERE token_hash = ?", (digest(token),))
@@ -368,3 +396,40 @@ class Store:
                 "AND ts >= ? ORDER BY id",
                 (iso(since),),
             ).fetchall()
+
+    # ── mailboxes and agents managed from the web app ─────────────────────
+
+    def managed_rows(self, kind: str) -> list[sqlite3.Row]:
+        table = {"mailboxes": "managed_mailboxes", "agents": "managed_agents"}[kind]
+        with self._conn() as db:
+            return db.execute(f"SELECT name, data FROM {table} ORDER BY rowid").fetchall()
+
+    def managed_write(
+        self,
+        put: dict[str, dict[str, dict[str, Any]]] | None = None,
+        delete: dict[str, list[str]] | None = None,
+    ) -> int:
+        """Apply upserts and deletes in one transaction; returns the new version."""
+        tables = {"mailboxes": "managed_mailboxes", "agents": "managed_agents"}
+        with self._conn() as db:
+            for kind, rows in (put or {}).items():
+                for name, data in rows.items():
+                    db.execute(
+                        f"INSERT INTO {tables[kind]} (name, data, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(name) DO UPDATE SET data = excluded.data, "
+                        "updated_at = excluded.updated_at",
+                        (name, json.dumps(data), iso(now())),
+                    )
+            for kind, names in (delete or {}).items():
+                for name in names:
+                    db.execute(f"DELETE FROM {tables[kind]} WHERE name = ?", (name,))
+            row = db.execute("SELECT value FROM prefs WHERE key = 'config_version'").fetchone()
+            version = (json.loads(row["value"]) if row else 0) + 1
+            db.execute(
+                "INSERT OR REPLACE INTO prefs (key, value) VALUES ('config_version', ?)",
+                (json.dumps(version),),
+            )
+        return version
+
+    def config_version(self) -> int:
+        return int(self.get_pref("config_version", 0))

@@ -20,6 +20,24 @@ class SmtpError(Exception):
 Attachment = tuple[str, str, bytes]  # (filename, content type, bytes)
 
 
+def check_login(cfg: SmtpConfig, timeout: float = 15) -> None:
+    """Connect and authenticate without sending anything."""
+    try:
+        if cfg.tls == "ssl":
+            with smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=timeout) as s:
+                s.login(cfg.username, cfg.password)
+        else:
+            with smtplib.SMTP(cfg.host, cfg.port, timeout=timeout) as s:
+                s.ehlo()
+                if cfg.tls == "starttls":
+                    s.starttls()
+                    s.ehlo()
+                if cfg.username:
+                    s.login(cfg.username, cfg.password)
+    except (smtplib.SMTPException, OSError) as e:
+        raise SmtpError(str(e) or type(e).__name__) from e
+
+
 def build_message(
     sender: str,
     to: Iterable[str],

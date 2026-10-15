@@ -137,6 +137,46 @@ A push carries the sender's name and the subject, and the unread count for the
 app icon badge. It travels encrypted end-to-end (Web Push, RFC 8291) through
 the browser vendor's push service (Apple, Google, Mozilla).
 
+## Manage mailboxes and agents in the app (optional)
+
+With `manage: true`, **Ajustes** gets two more lists: your mailboxes and your
+agents. Add a mailbox (with **Testar conexão** to check the server, port and
+password first), give an agent access to some mailboxes and scopes, take a
+scope away, issue a new token, remove an agent. Changes apply at once, on
+every worker, without a restart.
+
+```yaml
+web:
+  origin: https://mail.example.com
+  manage: true
+```
+
+and set `MAILGRANT_SECRET_KEY` in the environment (any long random string,
+e.g. `openssl rand -hex 32`): it encrypts the mailbox passwords in the
+database. Without it, mailgrant creates a random key in `data_dir/secret.key`,
+which protects a copied database but not a copied `data_dir`.
+
+- **The first start imports** the `mailboxes` and `agents` of the config into
+  the database. From then on the database decides and those two sections of
+  the file are ignored (the log says so), so you can delete them. Plain
+  `token:` values are kept only as their SHA-256.
+- **Every change asks for the passkey again** (Face ID / Touch ID), valid for
+  five minutes. Reading the lists does not.
+- **A new token is shown once**, with a ready-to-paste MCP configuration
+  (`url` and `Authorization` header). The database keeps only its hash.
+  "Gerar novo token" stops the old one immediately.
+- A mailbox listed by name in an agent's permissions can't be removed until
+  it is taken out there. Removing a mailbox from mailgrant never touches the
+  mail on the server.
+- **Baixar config** downloads the whole current config as YAML, passwords
+  included: a backup, and the way back to a file.
+- The person's own access stays in `web.user`, in the file, so nobody can
+  lock themselves out from the app.
+
+To stop managing from the app, download the config, put its `mailboxes` and
+`agents` back in the file and set `manage: false` (or remove it). The
+database tables stay untouched.
+
 ## What is stored, and where
 
 In `data_dir/mailgrant.db` (SQLite):
@@ -147,7 +187,9 @@ In `data_dir/mailgrant.db` (SQLite):
 - the push signing key (VAPID), created on first use;
 - the audit history for the Agents screen: agent, action, mailbox, UID,
   recipients, outcome — never subjects or bodies — kept 180 days;
-- the watcher's position in each mailbox.
+- the watcher's position in each mailbox;
+- with `manage: true`, the mailboxes (passwords encrypted) and the agents
+  (token hashes only).
 
 Mail itself stays on your IMAP servers.
 

@@ -107,6 +107,11 @@ def _check(path: str | None) -> int:
             f"web app: on at {cfg.web.origin}/app for {p.name} [{', '.join(sorted(p.scopes))}]"
             f"  {boxes}; data in {cfg.web.data_dir}"
         )
+        if cfg.web.manage:
+            print(
+                "manage: on — mailboxes and agents are managed in the web app; after the "
+                "first start, the ones in this file are ignored"
+            )
         if cfg.web.setup_code:
             print("setup code: set (creates the first passkey; ignored once one exists)")
     else:

@@ -136,6 +136,47 @@ O push leva o nome de quem enviou, o assunto e o número de não lidas para o
 ícone. Ele viaja cifrado de ponta a ponta (Web Push, RFC 8291) pelo serviço de
 push do fabricante do navegador (Apple, Google, Mozilla).
 
+## Gerenciar caixas e agentes pelo app (opcional)
+
+Com `manage: true`, os **Ajustes** ganham duas listas: suas caixas e seus
+agentes. Dá para adicionar uma caixa (com **Testar conexão** para conferir
+servidor, porta e senha antes), dar a um agente acesso a algumas caixas e
+permissões, tirar uma permissão, gerar um token novo, remover um agente. As
+mudanças valem na hora, em todos os workers, sem reiniciar.
+
+```yaml
+web:
+  origin: https://mail.exemplo.com.br
+  manage: true
+```
+
+e defina `MAILGRANT_SECRET_KEY` no ambiente (qualquer texto longo e
+aleatório, por exemplo `openssl rand -hex 32`): ela cifra as senhas das caixas
+no banco. Sem ela, o mailgrant cria uma chave aleatória em
+`data_dir/secret.key`, que protege uma cópia do banco, mas não uma cópia do
+`data_dir` inteiro.
+
+- **A primeira subida importa** as seções `mailboxes` e `agents` do config
+  para o banco. Dali em diante o banco manda e essas duas seções do arquivo
+  são ignoradas (o log avisa), então você pode apagá-las. Um `token:` em texto
+  vira só o SHA-256 dele.
+- **Toda mudança pede a passkey de novo** (Face ID / Touch ID), e a
+  confirmação vale cinco minutos. Ver as listas não pede.
+- **O token novo aparece uma vez**, junto com a configuração do MCP pronta
+  para colar (`url` e cabeçalho `Authorization`). O banco guarda só o hash.
+  "Gerar novo token" derruba o anterior na hora.
+- Uma caixa citada pelo nome nas permissões de um agente só sai depois de
+  tirada de lá. Remover uma caixa do mailgrant nunca mexe nos e-mails do
+  servidor.
+- **Baixar config** baixa o config atual inteiro em YAML, com as senhas: é a
+  cópia de segurança e o caminho de volta para o arquivo.
+- O seu próprio acesso continua em `web.user`, no arquivo, para ninguém se
+  trancar para fora pelo app.
+
+Para parar de gerenciar pelo app, baixe o config, devolva as seções
+`mailboxes` e `agents` para o arquivo e escreva `manage: false` (ou tire a
+linha). As tabelas do banco ficam como estão.
+
 ## O que fica guardado, e onde
 
 Em `data_dir/mailgrant.db` (SQLite):
@@ -146,7 +187,9 @@ Em `data_dir/mailgrant.db` (SQLite):
 - a chave que assina os pushes (VAPID), criada no primeiro uso;
 - o histórico da tela de Agentes: agente, ação, caixa, UID, destinatários,
   resultado (nunca assunto nem corpo), mantido por 180 dias;
-- a posição do vigia em cada caixa.
+- a posição do vigia em cada caixa;
+- com `manage: true`, as caixas (senhas cifradas) e os agentes (só o hash
+  dos tokens).
 
 Os e-mails continuam nos seus servidores IMAP.
 
