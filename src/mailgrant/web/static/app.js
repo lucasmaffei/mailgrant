@@ -162,6 +162,9 @@ const ICONS = {
 function icon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
+  // A size of its own, so an icon stays small even if the stylesheet is missing.
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
   svg.setAttribute("stroke-width", "1.8");

@@ -132,6 +132,17 @@ def test_shell_is_served_with_strict_headers(web_client: TestClient) -> None:
     assert web_client.get("/app/static/icons/icon-192.png").status_code == 200
 
 
+def test_a_release_never_mixes_old_and_new_files(web_client: TestClient) -> None:
+    from mailgrant import __version__
+
+    page = web_client.get("/app/")
+    assert f'/app/static/app.css?v={__version__}"' in page.text
+    assert f'/app/static/app.js?v={__version__}"' in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    for path in ("/app/static/app.css", "/app/static/app.js", "/app/static/i18n/fr.json"):
+        assert web_client.get(path).headers["cache-control"] == "no-cache", path
+
+
 def test_agents_still_need_their_token(web_client: TestClient) -> None:
     assert web_client.get("/mailboxes").status_code == 401
     assert (

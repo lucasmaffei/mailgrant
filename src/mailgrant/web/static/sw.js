@@ -1,7 +1,7 @@
 // mailgrant service worker: app shell cache, push notifications, badge.
 // Mail itself is never cached here: /app/api always goes to the network.
 
-const SHELL = "mailgrant-shell-v4";
+const SHELL = "mailgrant-shell-v5";
 const ASSETS = [
   "/app/",
   "/app/static/app.css",
@@ -42,7 +42,7 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch(() => caches.match(event.request).then((hit) => hit || caches.match("/app/"))),
+      .catch(() => caches.match(event.request, { ignoreSearch: true }).then((hit) => hit || caches.match("/app/"))),
   );
 });
 

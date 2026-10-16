@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.12.1
+
+- Fix: after an update the browser could pair the new JavaScript with the old stylesheet, and the new Settings came out broken (giant arrows, no columns). Static files now always revalidate (`cache-control: no-cache`), the page loads `app.css` and `app.js` with the version in the URL, and icons carry a size of their own so a missing stylesheet can't blow them up.
+
 ## v0.12.0 — Settings in sections
 
 - **Settings is a list of sections**, each on its own page: Email mailboxes and Agents (with `manage`), Notifications, Reading, Signatures, Language, Passkeys and devices, About. On a phone the list opens each section with a back button; on a computer the list stays on the left and the section opens beside it. Each row says where things stand (how many mailboxes and agents, notifications on or off, the current language).

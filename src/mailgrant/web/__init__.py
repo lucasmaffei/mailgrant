@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .. import audit
+from .. import __version__, audit
 from ..config import Config
 from .api import agent_send_notifier, build_router
 from .push import Pusher
@@ -63,6 +63,10 @@ class _AppHeaders:
                 ]
                 if str(scope.get("path", "")).startswith("/app/api"):
                     defaults.append((b"cache-control", b"no-store"))
+                elif str(scope.get("path", "")).startswith("/app/static/"):
+                    # Without it browsers guess how long to keep a file, and a
+                    # deploy can pair new JavaScript with yesterday's CSS.
+                    defaults.append((b"cache-control", b"no-cache"))
                 headers += [(k, v) for k, v in defaults if k not in present]
                 message["headers"] = headers
             await send(message)
@@ -98,7 +102,16 @@ def mount(app: FastAPI, cfg: Config) -> tuple[Callable[[], None], Callable[[], N
 
     app.add_api_route("/", lambda: RedirectResponse("/app/"), include_in_schema=False)
     app.add_api_route("/app", lambda: RedirectResponse("/app/"), include_in_schema=False)
-    app.add_api_route("/app/", page("index.html"), include_in_schema=False)
+    # The shell names its CSS and JS with the version, so a new release is
+    # always fetched as a whole, never half from an old cache.
+    shell = (STATIC / "index.html").read_text()
+    for asset in ("/app/static/app.css", "/app/static/app.js"):
+        shell = shell.replace(f'"{asset}"', f'"{asset}?v={__version__}"')
+
+    def index() -> HTMLResponse:
+        return HTMLResponse(shell, headers={"cache-control": "no-cache"})
+
+    app.add_api_route("/app/", index, include_in_schema=False)
     # The worker sits at /app/ so its scope covers the whole app.
     app.add_api_route("/app/sw.js", page("sw.js", "text/javascript"), include_in_schema=False)
     app.add_api_route(
