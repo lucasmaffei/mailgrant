@@ -48,7 +48,7 @@ from ..imap_client import delete_message as imap_delete
 from ..imap_client import fetch_attachment as imap_attachment
 from ..imap_client import fetch_attachments
 from ..imap_client import fetch_message as imap_fetch
-from ..imap_client import fetch_thread, list_messages, mailbox_status
+from ..imap_client import fetch_raw, fetch_thread, html_body, list_messages, mailbox_status
 from ..imap_client import mark_seen as imap_mark_seen
 from ..imap_client import message_ids, move_to
 from ..imap_client import search_messages as imap_search
@@ -56,6 +56,7 @@ from ..imap_client import set_flags, special_folder
 from ..imap_client import unified_search as imap_unified_search
 from ..smtp_client import SmtpError, build_message
 from ..smtp_client import send as smtp_send
+from . import html_view
 from .managed import Managed
 from .push import Pusher
 from .store import Store, now
@@ -683,6 +684,8 @@ def build_router(
             "message_id": msg.get("message_id"),
             "references": msg.get("references"),
             "body": msg.get("body_reader") or msg.get("body_text") or "",
+            "html": bool(msg.get("body_html")),
+            "remote_images": html_view.has_remote(msg.get("body_html")),
             "attachments": msg.get("attachments") or [],
             "agents": history,
             "can": {
@@ -691,6 +694,34 @@ def build_router(
                 "trash": who.has("delete"),
             },
         }
+
+    @router.get("/messages/{name}/{uid}/html")
+    def message_html(
+        name: str,
+        uid: str,
+        folder: str | None = None,
+        images: bool = False,
+        who: Principal = Depends(person),
+    ) -> Response:
+        """The HTML body as its own sandboxed document, for the reading frame."""
+        mb = mailbox(who, name, "read", "get_message", uid=uid)
+        try:
+            msg = fetch_raw(imap_of(mb), uid, folder=folder)
+        except ImapError as e:
+            raise HTTPException(404, str(e)) from e
+        html = html_body(msg)
+        if html is None:
+            raise HTTPException(404, "this message has no HTML body")
+        return Response(
+            html_view.document(html, html_view.inline_parts(msg), images=images),
+            media_type="text/html; charset=utf-8",
+            headers={
+                "content-security-policy": html_view.policy(images),
+                "x-frame-options": "SAMEORIGIN",
+                # The same message is drawn again on every re-render of the app.
+                "cache-control": "private, max-age=600",
+            },
+        )
 
     @router.get("/messages/{name}/{uid}/attachments/{index}")
     def attachment(
@@ -846,6 +877,8 @@ def build_router(
                     "message_id": m.get("message_id"),
                     "references": m.get("references"),
                     "body": m.get("body_reader") or m.get("body_text") or "",
+                    "html": bool(m.get("body_html")),
+                    "remote_images": html_view.has_remote(m.get("body_html")),
                     "attachments": m.get("attachments") or [],
                     "unread": "\\Seen" not in (m.get("flags") or []),
                     "flagged": "\\Flagged" in (m.get("flags") or []),
@@ -1121,6 +1154,9 @@ def build_router(
             "notify_agent_send": bool(store.get_pref("notify_agent_send", True)),
             "threads": bool(store.get_pref("threads", True)),
             "signatures": {n: str(signatures.get(n, "")) for n in senders},
+            # Remote images in HTML mail: always, or only from these sender domains.
+            "images": bool(store.get_pref("images", False)),
+            "image_senders": list(store.get_pref("image_senders", [])),
         }
 
     @router.get("/prefs")
@@ -1150,6 +1186,11 @@ def build_router(
                 },
             }
             store.set_pref("signatures", merged)
+        if "images" in body:
+            store.set_pref("images", bool(body["images"]))
+        if isinstance(body.get("image_senders"), list):
+            domains = [str(d).strip().lower()[:253] for d in body["image_senders"]]
+            store.set_pref("image_senders", sorted({d for d in domains if d})[:500])
         return notify_prefs(who)
 
     @router.get("/push/key")

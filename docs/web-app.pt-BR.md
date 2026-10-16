@@ -20,7 +20,7 @@ nenhum banco, nenhuma dependência extra carregada.
 |---|---|
 | Entrada | Todas as caixas que você pode ver, das mais novas para as mais antigas, agrupadas por conversa, com filtro por caixa, busca e "carregar mais antigas". Cada linha mostra qual agente já leu ou respondeu. Também **Com estrela**, **Enviados** e **Rascunhos**. |
 | Enviados | O que saiu da pasta Enviados de cada caixa, do mais novo para o mais antigo, com quem enviou: você ou o agente ("hermes enviou"). Abrir um mostra a conversa inteira, com as respostas. |
-| Conversa | Todas as mensagens da conversa, inclusive o que você enviou (vindo de Enviados), da mais antiga para a mais nova; as antigas ficam recolhidas numa linha. O corpo em texto limpo (o HTML é convertido, nunca interpretado), anexos para baixar, os agentes que mexeram nela. |
+| Conversa | Todas as mensagens da conversa, inclusive o que você enviou (vindo de Enviados), da mais antiga para a mais nova; as antigas ficam recolhidas numa linha. E-mail em HTML do jeito que foi desenhado (limpo, num iframe isolado, ajustado à tela, imagens externas só se você pedir), texto como texto, anexos para baixar, os agentes que mexeram nela. |
 | Escrever | Responder, responder a todos, encaminhar (com os anexos), Cc e Cco, anexar arquivos do celular, uma assinatura por caixa. Respostas entram na mesma conversa e ficam em Enviados. |
 | Rascunhos | O que você escreve é salvo na pasta Rascunhos da própria caixa alguns segundos depois que você para de digitar, então aparece também em outros apps de e-mail. Fechar o editor guarda o rascunho; abrir e fechar sem escrever não deixa nada. |
 | Agentes | A auditoria como linha do tempo: leituras, envios, idas para a lixeira e cada recusa, com filtro por envios ou por barrados. |
@@ -206,8 +206,14 @@ Os e-mails continuam nos seus servidores IMAP.
   `Origin` certa.
 - **As mesmas regras dos agentes.** A pessoa logada recebe permissão por
   `web.user`; toda ação passa pelas mesmas checagens e pela mesma auditoria.
-- **E-mail é texto.** O corpo aparece como texto (com links clicáveis), o HTML
-  nunca é interpretado, anexos sempre baixam.
+- **E-mail em HTML aparece, trancado.** O corpo HTML é limpo no servidor (sem
+  script, formulário, iframe, eventos ou folha de estilo remota) e servido como
+  um documento próprio, com uma CSP sem nenhuma fonte de script e um sandbox
+  sem `allow-scripts`; o iframe que o mostra tem o mesmo sandbox. Imagens
+  externas ficam bloqueadas por essa CSP até você tocar em **Mostrar** (ou
+  liberar o domínio do remetente, ou todos em Ajustes), porque elas avisam o
+  remetente quando e de onde o e-mail foi aberto. Imagens embutidas (`cid:`)
+  aparecem sempre. E-mail em texto continua texto, e anexos sempre baixam.
 - **Nada é apagado de surpresa.** Lixeira e arquivo são movimentações. A única
   exclusão definitiva é a de um rascunho substituído: salvar um rascunho grava
   uma versão nova e apaga a anterior, e o servidor recusa isso para qualquer
@@ -216,7 +222,8 @@ Os e-mails continuam nos seus servidores IMAP.
   `mark`; a lixeira pede `delete`; rascunhos pedem `send`. Encaminhar um anexo
   pede `read` na caixa de onde ele vem. Os anexos vão até 25 MB por mensagem.
 - **CSP rígida**: nada é carregado de outra origem (as fontes vêm junto), sem
-  script ou estilo inline, sem iframes.
+  script ou estilo inline, e o único iframe permitido é o do e-mail, servido
+  pela própria origem do app.
 - O token de um agente não abre o app web, e a sessão do app não abre a API
   MCP/REST.
 

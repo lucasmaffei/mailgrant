@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.0 — HTML mail, shown properly
+
+- **HTML mail is shown as it was designed** instead of flattened to text, where receipts and newsletters built from layout tables came out as rows of `| | |`. The body is sanitized on the server (nh3), served as its own document with a CSP that allows no script at all and a CSP sandbox, and drawn in a sandboxed iframe that grows to its content and scales 600px layouts down to the phone's width.
+- **Remote images are held back** until you tap **Mostrar**, or **Sempre de <domínio>** for a sender; Ajustes has a switch for all senders and a way to forget the allowed ones. Held-back images keep their space without the broken-image icon. Inline (`cid:`) images always show.
+- The text agents get from HTML mail (and the app's snippets) no longer carries table markup.
+- Fix: two processes opening a new data directory at the same moment could both try to add the 0.9 `confirmed_at` column, and the second one failed to start.
+
 ## v0.9.1
 
 - **Enviados**: what went out of every mailbox's Sent folder, with who sent it (you, or which agent, from the audit log). Opening a sent message shows the conversation, replies from the inbox included.

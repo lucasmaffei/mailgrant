@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import email
 import json
+from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +17,7 @@ from mailgrant import audit
 from mailgrant.cli import main as cli_main
 from mailgrant.config import load_config
 from mailgrant.server import create_app
+from mailgrant.web import html_view
 from mailgrant.web.push import Pusher
 from mailgrant.web.store import Store
 from mailgrant.web.watcher import Watcher
@@ -441,6 +444,8 @@ def test_prefs_and_push_subscription(
         "notify": {"alpha": True, "beta": True},
         "notify_agent_send": True,
         "threads": True,
+        "images": False,
+        "image_senders": [],
         "signatures": {"alpha": ""},
     }
     prefs = web_client.put(
@@ -730,3 +735,41 @@ def test_sent_view_says_who_sent_it(
         ("2", "Sent", ["c@x.org"], None, True),
     ]
     assert search.call_args.kwargs["folder"] == "Sent"
+
+
+# ── HTML mail ───────────────────────────────────────────────────────────────
+
+HTML_RECEIPT = '<table width="600"><tr><td style="color:#00a650">R$ 9,90</td></tr></table>'
+
+
+def test_frame_endpoint_has_its_own_strict_headers(
+    web_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sign_in(web_client, monkeypatch)
+    msg = EmailMessage()
+    msg.set_content("texto")
+    msg.add_alternative(HTML_RECEIPT, subtype="html")
+    fetch = Mock(return_value=email.message_from_bytes(msg.as_bytes()))
+    monkeypatch.setattr("mailgrant.web.api.fetch_raw", fetch)
+    r = web_client.get("/app/api/messages/alpha/7/html?folder=INBOX")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["content-security-policy"] == html_view.policy(images=False)
+    assert r.headers["x-frame-options"] == "SAMEORIGIN"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert "R$ 9,90" in r.text and "<title>" not in r.text
+    assert fetch.call_args.kwargs == {"folder": "INBOX"}
+    r = web_client.get("/app/api/messages/alpha/7/html?images=1")
+    assert "https:" in r.headers["content-security-policy"]
+
+    plain = EmailMessage()
+    plain.set_content("só texto")
+    fetch.return_value = email.message_from_bytes(plain.as_bytes())
+    assert web_client.get("/app/api/messages/alpha/7/html").status_code == 404
+    assert web_client.get("/app/api/messages/nope/7/html").status_code in (403, 404)
+
+
+def test_app_pages_may_frame_only_themselves(web_client: TestClient) -> None:
+    r = web_client.get("/app/")
+    assert "frame-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["x-frame-options"] == "DENY"

@@ -1,6 +1,7 @@
 // mailgrant web app. No framework, no build step: the server ships these
 // files as they are. Everything that comes from mail is inserted as text
-// (textContent), never as HTML.
+// (textContent), never as HTML. The one exception is an HTML body, which the
+// server sanitizes and serves as its own document for a sandboxed iframe.
 
 const API = "/app/api";
 const WIDE = window.matchMedia("(min-width: 1000px)");
@@ -28,6 +29,7 @@ const state = {
   thread: null,
   threadKey: null,
   expanded: new Set(),
+  showImages: new Set(),
   draft: null,
   passkeys: null,
   agents: null,
@@ -1143,6 +1145,90 @@ function replyHref(kind, t, m) {
   return `#/${kind}/${enc(t.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`;
 }
 
+// ── HTML mail ─────────────────────────────────────────────────────────────
+
+// Each render rebuilds the page, and an iframe reloads when it is re-inserted.
+// The browser cache answers the reload; remembering the height keeps the
+// conversation from jumping while it does.
+const frameHeights = new Map();
+const senderDomain = (m) => (m.from_address || "").split("@").pop().toLowerCase();
+
+function imagesShown(t, m) {
+  const p = state.prefs || {};
+  return !m.remote_images || p.images || (p.image_senders || []).includes(senderDomain(m)) || state.showImages.has(`${t.mailbox}/${msgKey(m)}`);
+}
+
+function fitFrame(frame, key) {
+  const doc = frame.contentDocument;
+  const root = doc?.documentElement;
+  const body = doc?.body;
+  if (!root || !body) return;
+  // Mail laid out for 600px is scaled down to the screen instead of scrolling
+  // sideways, the way phone mail apps do. A transform, not CSS zoom: browsers
+  // disagree on how zoom shows up in measurements, and agree on transforms.
+  const measure = () => {
+    const height = Math.ceil(body.getBoundingClientRect().height);
+    if (height && Math.abs(height - frame.offsetHeight) > 1) {
+      frame.style.height = `${height}px`;
+      frameHeights.set(key, height);
+    }
+  };
+  const scale = () => {
+    ["width", "transform", "box-sizing"].forEach((k) => body.style.removeProperty(k));
+    root.style.removeProperty("overflow");
+    const wide = root.scrollWidth;
+    const room = frame.clientWidth;
+    if (wide > room + 2) {
+      body.style.setProperty("box-sizing", "border-box", "important");
+      body.style.setProperty("width", `${wide}px`, "important");
+      body.style.setProperty("transform", `scale(${room / wide})`, "important");
+      body.style.setProperty("transform-origin", "0 0", "important");
+      root.style.setProperty("overflow", "hidden", "important");
+    }
+    measure();
+  };
+  scale();
+  new ResizeObserver(measure).observe(body);
+  // An image arriving late can widen the layout; that needs a new scale.
+  doc.querySelectorAll("img").forEach((img) => img.complete || img.addEventListener("load", scale, { once: true }));
+}
+
+function mailFrame(t, m) {
+  const images = imagesShown(t, m);
+  const key = `${t.mailbox}/${msgKey(m)}${images ? "+img" : ""}`;
+  const src = `${API}/messages/${enc(t.mailbox)}/${enc(m.uid)}/html?folder=${enc(m.folder)}${images && m.remote_images ? "&images=1" : ""}`;
+  const frame = h("iframe", {
+    class: "mail-frame", src, title: `Mensagem de ${m.from || m.from_address}`,
+    sandbox: "allow-same-origin allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer",
+  });
+  if (frameHeights.has(key)) frame.style.height = `${frameHeights.get(key)}px`;
+  // Not the load event: it waits for every image, and a slow tracking pixel
+  // would leave the frame at its default height. The text is enough to start.
+  let tries = 0;
+  const ready = () => {
+    const doc = frame.contentDocument;
+    if (doc && doc.URL !== "about:blank" && doc.readyState !== "loading" && doc.body) return fitFrame(frame, key);
+    if (++tries < 200 && (frame.isConnected || tries < 5)) setTimeout(ready, 50);
+  };
+  setTimeout(ready, 0);
+  return frame;
+}
+
+function imagesBar(t, m) {
+  if (imagesShown(t, m)) return null;
+  const domain = senderDomain(m);
+  const show = () => { state.showImages.add(`${t.mailbox}/${msgKey(m)}`); render(); };
+  const always = async () => {
+    const list = [...new Set([...(state.prefs.image_senders || []), domain])];
+    state.prefs = await api("/prefs", { method: "PUT", body: { image_senders: list } });
+    render();
+  };
+  return h("div", { class: "images-bar" },
+    h("span", { class: "grow" }, "Imagens externas bloqueadas. Elas avisam o remetente quando você abre."),
+    h("button", { type: "button", class: "btn quiet small bare", onClick: show }, "Mostrar"),
+    domain && h("button", { type: "button", class: "btn quiet small bare", onClick: always }, `Sempre de ${domain}`));
+}
+
 function threadMessageView(t, m, isLast) {
   const open = state.expanded.has(msgKey(m));
   const many = t.messages.length > 1;
@@ -1160,7 +1246,7 @@ function threadMessageView(t, m, isLast) {
       h("div", { class: "top" }, h("strong", {}, who), h("span", { class: "mono" }, when(m.ts, { withTime: true }))),
       h("span", { class: "mono addr" }, m.sent ? `${m.from_address} · Enviados` : m.from_address),
       recipients && h("span", { class: "mono addr" }, recipients)),
-    h("div", { class: "body" }, linkify(m.body || "(mensagem sem texto)")),
+    m.html ? [imagesBar(t, m), mailFrame(t, m)] : h("div", { class: "body" }, linkify(m.body || "(mensagem sem texto)")),
     m.attachments.map((a) => h("a", { class: "attach", href: `${API}${path}/attachments/${a.index}?folder=${enc(m.folder)}`, download: a.filename || "anexo" },
       icon("file"), h("span", {}, a.filename || "anexo"), h("span", { class: "mono" }, size(a.size)))),
     t.can.reply && many && !isLast && h("div", { class: "tmsg-actions" },
@@ -1386,7 +1472,14 @@ function settingsPane() {
         h("div", { class: "plain" },
           h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Agrupar por conversa"),
             h("span", { class: "detail" }, "Respostas ficam juntas na lista, e a conversa mostra o que você enviou.")),
-            sw(p.threads, "Agrupar por conversa", async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })))),
+            sw(p.threads, "Agrupar por conversa", async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })),
+          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Mostrar imagens externas sempre"),
+            h("span", { class: "detail" }, p.images ? "Ligado para todos os remetentes."
+              : p.image_senders.length ? `Hoje só de: ${p.image_senders.join(", ")}.`
+              : "Uma imagem externa avisa o remetente quando e de onde você abriu.")),
+            sw(p.images, "Mostrar imagens externas sempre", () => savePrefs({ images: !p.images }))),
+          p.image_senders.length > 0 && h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Esquecer os remetentes liberados")),
+            h("button", { type: "button", class: "btn small ghost", onClick: () => savePrefs({ image_senders: [] }) }, "Esquecer")))),
       p && can("send") && Object.keys(p.signatures).length > 0 && h("section", { class: "section" },
         h("h2", {}, "Assinaturas"),
         h("div", { class: "plain" }, Object.keys(p.signatures).map((name) => h("div", { class: "item sig" },

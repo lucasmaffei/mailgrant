@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 def _html_to_reader(html: str) -> str:
     """Strip HTML chrome and return readable plain-text/markdown.
 
-    Designed for email bodies: drops style/script, flattens tables, keeps
+    Designed for email bodies: drops style/script, unwraps layout tables, keeps
     links inline, ignores images. Output is wrapped at a sane width so
     long marketing-email lines don't blow out terminals.
     """
@@ -41,7 +41,10 @@ def _html_to_reader(html: str) -> str:
     h.single_line_break = False
     h.skip_internal_links = True
     h.unicode_snob = True
-    return h.handle(html).strip()
+    # Layout tables would come out as rows of "| | |"; their text is what matters.
+    h.ignore_tables = True
+    lines = [line.rstrip() for line in h.handle(html).splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 class ImapError(Exception):
@@ -672,6 +675,29 @@ def headers_since(
         uids = [u for u in _uid_search(conn, f"UID {int(first_uid)}:*") if int(u) >= first_uid]
         # `n:*` always matches the highest UID, even when it is below n.
         return _fetch_headers(conn, uids, limit)
+
+
+def fetch_raw(cfg: ImapConfig, uid: str, folder: str | None = None) -> Message:
+    """The whole parsed message, without marking it read."""
+    folder = folder or cfg.default_folder
+    _validate_uid(uid)
+    _reject_control_chars(folder, "folder")
+    with _connect(cfg) as conn:
+        _select(conn, folder, readonly=True)
+        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[])")
+        if typ != "OK" or not data or not isinstance(data[0], tuple):
+            raise ImapError(f"could not fetch UID {uid}")
+        raw = data[0][1]
+    return email.message_from_bytes(raw if isinstance(raw, bytes) else raw.encode())
+
+
+def html_body(msg: Message) -> str | None:
+    """The first non-attachment text/html part, as the message's HTML body."""
+    for part in msg.walk() if msg.is_multipart() else [msg]:
+        disp = (part.get("Content-Disposition") or "").lower()
+        if part.get_content_type() == "text/html" and "attachment" not in disp:
+            return _payload_str(part)
+    return None
 
 
 def fetch_attachment(

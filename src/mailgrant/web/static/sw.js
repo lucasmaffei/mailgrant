@@ -1,7 +1,7 @@
 // mailgrant service worker: app shell cache, push notifications, badge.
 // Mail itself is never cached here: /app/api always goes to the network.
 
-const SHELL = "mailgrant-shell-v2";
+const SHELL = "mailgrant-shell-v3";
 const ASSETS = [
   "/app/",
   "/app/static/app.css",

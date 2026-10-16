@@ -27,12 +27,13 @@ log = logging.getLogger("mailgrant.web")
 
 STATIC = Path(__file__).parent / "static"
 
-# Message bodies are rendered as text and attachments always download, so the
-# app needs nothing from other origins: no inline script, no frames, no CDNs.
+# Attachments always download and HTML mail is shown in a sandboxed frame from
+# our own origin (with its own, stricter policy, see html_view), so the app
+# needs nothing from other origins: no inline script, no CDNs.
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; "
-    "frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; "
+    "frame-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; "
     "form-action 'self'"
 )
 
@@ -51,7 +52,9 @@ class _AppHeaders:
         async def with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
-                headers += [
+                # A route that set one of these (the mail frame) keeps its own.
+                present = {k.lower() for k, _ in headers}
+                defaults = [
                     (b"content-security-policy", CSP.encode()),
                     (b"x-content-type-options", b"nosniff"),
                     (b"referrer-policy", b"no-referrer"),
@@ -59,7 +62,8 @@ class _AppHeaders:
                     (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
                 ]
                 if str(scope.get("path", "")).startswith("/app/api"):
-                    headers.append((b"cache-control", b"no-store"))
+                    defaults.append((b"cache-control", b"no-store"))
+                headers += [(k, v) for k, v in defaults if k not in present]
                 message["headers"] = headers
             await send(message)
 

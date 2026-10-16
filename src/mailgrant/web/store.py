@@ -125,7 +125,12 @@ class Store:
                     db.executescript(SCHEMA)
                     cols = {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}
                     if "confirmed_at" not in cols:  # added in 0.9
-                        db.execute("ALTER TABLE sessions ADD COLUMN confirmed_at TEXT")
+                        try:
+                            db.execute("ALTER TABLE sessions ADD COLUMN confirmed_at TEXT")
+                        except sqlite3.OperationalError as e:
+                            # Another process starting at the same time got there first.
+                            if "duplicate column" not in str(e):
+                                raise
                 break
             except sqlite3.OperationalError as e:
                 if "locked" not in str(e) or attempt == 49:

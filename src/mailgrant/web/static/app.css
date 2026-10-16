@@ -173,6 +173,11 @@ svg { flex: none; }
 .agent-line::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
 .rule { height: 1px; background: var(--line); }
 .body { font-size: 15px; line-height: 1.65; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-frame { display: block; width: 100%; height: 160px; border: 0; border-radius: 6px; background: #fff; color-scheme: light; }
+@media (max-width: 999px) { .mail-frame { width: calc(100% + 40px); margin: 0 -20px; border-radius: 0; } }
+.images-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; color: var(--muted); }
+.images-bar .grow { flex: 1 1 100%; }
+.images-bar .btn.small.bare { padding: 0; height: 28px; }
 .attach { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); color: var(--text); text-decoration: none; font-size: 14px; }
 .attach span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-foot { display: flex; gap: 8px; padding: 12px 20px calc(16px + var(--bottom)); border-top: 1px solid var(--line); }

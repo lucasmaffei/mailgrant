@@ -22,7 +22,7 @@ extra dependencies loaded.
 |---|---|
 | Inbox | Every mailbox you can see, newest first, grouped by conversation, filter by mailbox, search, load older. Each row shows which agent already read or answered it. Also **Com estrela** (starred), **Enviados** (sent) and **Rascunhos** (drafts). |
 | Sent | What left every mailbox's Sent folder, newest first, marked with who sent it: you, or the agent ("hermes enviou"). Opening one shows the whole conversation, replies included. |
-| Conversation | Every message of the thread, including what you sent (from Sent), oldest first; older ones fold to one line. Bodies as clean text (HTML is converted, never rendered), attachments to download, the agents that touched it. |
+| Conversation | Every message of the thread, including what you sent (from Sent), oldest first; older ones fold to one line. HTML mail as it was designed (sanitized, in a sandboxed frame, scaled to fit the screen, remote images on request), plain text as text, attachments to download, the agents that touched it. |
 | Writing | Reply, reply all, forward (attachments included), Cc and Bcc, attach files from the phone, a signature per mailbox. Replies stay in the thread and are filed in Sent. |
 | Drafts | What you write is saved to the mailbox's own Drafts folder a few seconds after you stop typing, so it also shows up in other mail apps. Closing the editor keeps it; opening and closing without writing leaves nothing behind. |
 | Agents | The audit trail as a timeline: reads, sends, trash moves, and every refusal — filter by sends or by refusals. |
@@ -207,8 +207,14 @@ Mail itself stays on your IMAP servers.
 - **Same rules as agents.** The signed-in person is a principal granted by
   `web.user`; every action goes through the same grant checks and the same
   audit log.
-- **Mail is text.** Bodies are rendered as text (links made clickable), HTML
-  is never interpreted, attachments always download.
+- **HTML mail is shown, locked down.** An HTML body is sanitized on the server
+  (no script, forms, frames, event handlers or remote stylesheets) and served
+  as its own document with a CSP that has no script source and a CSP sandbox
+  without `allow-scripts`; the iframe that shows it is sandboxed the same way.
+  Remote images are blocked by that CSP until you tap **Mostrar** (or allow a
+  sender's domain, or all senders in Ajustes), since they tell the sender when
+  and from where the mail was opened. Inline (`cid:`) images always show.
+  Plain-text mail stays text, and attachments always download.
 - **Nothing is erased by surprise.** The trash and the archive are moves.
   The one permanent delete is a superseded draft: saving a draft stores a new
   version and erases the previous one, and the server refuses it for any
@@ -218,7 +224,8 @@ Mail itself stays on your IMAP servers.
   `read` on the mailbox it comes from. Attachments are capped at 25 MB per
   message.
 - **Strict CSP**: nothing loads from other origins — fonts are bundled, no
-  inline scripts or styles, no frames.
+  inline scripts or styles, and the only frame allowed is the mail frame from
+  the app's own origin.
 - Agents' bearer tokens don't open the web app, and the web session doesn't
   open the MCP/REST API.
 
