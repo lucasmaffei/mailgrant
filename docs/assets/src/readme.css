@@ -5,7 +5,7 @@
 :root { --bg: #05090b; --surface: #0b1114; --raised: #121a1e; --line: rgba(255,255,255,.07); --border: rgba(255,255,255,.12);
   --text: #f7f8f8; --text-2: #b3bcc1; --muted: #87949b; --faint: #56646b; --accent: #38cfff; --warn: #f5b54a; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: var(--bg); color: var(--text); font-family: "Inter", sans-serif; -webkit-font-smoothing: antialiased; }
+html, body { background: var(--bg); color: var(--text); font-family: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif; -webkit-font-smoothing: antialiased; }
 .word { font-family: "Inter Tight", sans-serif; font-weight: 500; letter-spacing: -0.035em; }
 .word i { font-style: normal; color: var(--accent); }
 .mono { font-family: "Geist Mono", monospace; }

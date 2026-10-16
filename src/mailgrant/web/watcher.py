@@ -21,6 +21,7 @@ from typing import Any
 from ..config import Config
 from ..grants import web_principal
 from ..imap_client import ImapError, headers_since, mailbox_status
+from . import i18n
 from .push import Pusher
 from .store import Store
 
@@ -29,9 +30,9 @@ log = logging.getLogger("mailgrant.web.watcher")
 MAX_PUSHES_PER_MAILBOX = 5
 
 
-def sender_name(raw: str) -> str:
+def sender_name(raw: str, lang: str = "en") -> str:
     name, addr = parseaddr(raw or "")
-    return name or addr or "Novo e-mail"
+    return name or addr or i18n.text(lang, "new_mail")
 
 
 class Watcher:
@@ -102,10 +103,11 @@ class Watcher:
             return []
         badge = self.store.unseen_total([m.name for m in self.mailboxes()])
         sent = []
+        lang = i18n.language(self.store)
         for mb, h in reversed(fresh):  # oldest first, so the newest ends on top
             payload = {
-                "title": sender_name(h.get("from", "")),
-                "body": h.get("subject") or "(sem assunto)",
+                "title": sender_name(h.get("from", ""), lang),
+                "body": h.get("subject") or i18n.text(lang, "no_subject"),
                 "tag": f"{mb.name}:{h.get('uid')}",
                 "url": f"/app/#/m/{mb.name}/{h.get('uid')}",
                 "mailbox": mb.imap.username,

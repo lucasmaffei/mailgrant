@@ -3,7 +3,7 @@
   "name": "io.github.lucasmaffei/mailgrant",
   "title": "mailgrant",
   "description": "Self-hosted email gateway for AI agents: each token gets its own IMAP/SMTP mailboxes and scopes.",
-  "version": "0.6.0",
+  "version": "0.11.0",
   "repository": {
     "url": "https://github.com/lucasmaffei/mailgrant",
     "source": "github"

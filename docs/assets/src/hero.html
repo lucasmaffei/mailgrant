@@ -14,12 +14,12 @@ body { width: 1280px; height: 600px; position: relative; overflow: hidden; }
   <p id="tag"></p>
   <span class="mono" id="sub"></span>
 </div>
-<div class="phone p1"><img src="shots/02-entrada.png" alt=""></div>
-<div class="phone p2"><img src="shots/05-agentes.png" alt=""></div>
+<div class="phone p1"><img id="s1" alt=""></div>
+<div class="phone p2"><img id="s2" alt=""></div>
+<script src="art-text.js"></script>
 <script>
-const pt = new URLSearchParams(location.search).get('lang') === 'pt-BR';
-document.getElementById('tag').innerHTML = pt
-  ? 'Um gateway de e-mail para pessoas e agentes de IA. <b>Cada um com as suas caixas e as suas permissões.</b>'
-  : 'One email gateway for people and AI agents. <b>Each with its own mailboxes and permissions.</b>';
-document.getElementById('sub').textContent = pt ? 'MCP, REST e um app web instalável. MIT.' : 'MCP, REST and an installable web app. MIT.';
+document.getElementById('tag').innerHTML = A.tag;
+document.getElementById('sub').textContent = A.sub;
+document.getElementById('s1').src = `shots/${LANG}/inbox.png`;
+document.getElementById('s2').src = `shots/${LANG}/agents.png`;
 </script></body></html>

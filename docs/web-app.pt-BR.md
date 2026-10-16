@@ -14,6 +14,10 @@ nenhum banco, nenhuma dependência extra carregada.
 
 ![O app web no celular](assets/screens.pt-BR.png)
 
+> A interface fala português (Brasil), inglês, espanhol, francês e chinês
+> simplificado. Ela segue o idioma do navegador até você escolher um em
+> Ajustes; veja [Adicionar um idioma](#adicionar-um-idioma).
+
 ## O que tem
 
 | Tela | O que faz |
@@ -24,7 +28,7 @@ nenhum banco, nenhuma dependência extra carregada.
 | Escrever | Responder, responder a todos, encaminhar (com os anexos), Cc e Cco, anexar arquivos do celular, uma assinatura por caixa. Respostas entram na mesma conversa e ficam em Enviados. |
 | Rascunhos | O que você escreve é salvo na pasta Rascunhos da própria caixa alguns segundos depois que você para de digitar, então aparece também em outros apps de e-mail. Fechar o editor guarda o rascunho; abrir e fechar sem escrever não deixa nada. |
 | Agentes | A auditoria como linha do tempo: leituras, envios, idas para a lixeira e cada recusa, com filtro por envios ou por barrados. |
-| Ajustes | Ligar notificações, escolher quais caixas notificam, receber push quando um agente enviar e-mail, gerenciar passkeys, ver o acesso de cada agente. |
+| Ajustes | Escolher o idioma, ligar notificações, escolher quais caixas notificam, receber push quando um agente enviar e-mail, gerenciar passkeys, ver o acesso de cada agente. |
 
 Organizar funciona em uma mensagem ou em várias: estrela, lida/não lida,
 **arquivar** e lixeira. No celular, deslize a linha para a direita para marcar
@@ -179,6 +183,23 @@ no banco. Sem ela, o mailgrant cria uma chave aleatória em
 Para parar de gerenciar pelo app, baixe o config, devolva as seções
 `mailboxes` e `agents` para o arquivo e escreva `manage: false` (ou tire a
 linha). As tabelas do banco ficam como estão.
+
+## Adicionar um idioma
+
+Os textos do app são escritos em inglês em `src/mailgrant/web/static/app.js`
+(`t("…")`, `tn(n, "{n} message", "{n} messages")`) e traduzidos em
+`src/mailgrant/web/static/i18n/<código>.json`. Para adicionar um:
+
+1. Copie `i18n/fr.json` para `i18n/<código>.json` e traduza os valores. Mantenha
+   os `{marcadores}`; plurais são objetos com as categorias do
+   `Intl.PluralRules` do idioma (`one`, `other`, …). Chaves com prefixo
+   `contexto|` são dois textos que ficam iguais em inglês.
+2. Acrescente o código e o nome do idioma, escrito nele mesmo, em `LANGS` no
+   `app.js`, em `LANGUAGES` e `MESSAGES` no `src/mailgrant/web/i18n.py` (as
+   notificações push), nos `ASSETS` do service worker em `static/sw.js` e em
+   `pickLang()`, para quem usa o navegador nesse idioma recebê-lo sozinho.
+3. Rode `pytest tests/test_i18n.py`: ele falha com qualquer texto faltando,
+   sobrando ou com marcador errado.
 
 ## O que fica guardado, e onde
 

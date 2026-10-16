@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="readme.css">
+<style>
+/* GitHub's social preview: 1280×640, shown cropped to ~2:1 in link cards. */
+body { width: 1280px; height: 640px; position: relative; overflow: hidden; }
+.copy { position: absolute; left: 80px; top: 0; bottom: 0; width: 600px; display: flex; flex-direction: column; justify-content: center; gap: 28px; }
+.copy .word { font-size: 96px; line-height: 1; }
+.copy p { font-size: 27px; line-height: 1.38; color: var(--text-2); }
+.copy .mono { font-size: 16px; color: var(--faint); }
+.p1 { position: absolute; left: 740px; top: 70px; width: 270px; }
+.p2 { position: absolute; left: 960px; top: 130px; width: 270px; }
+</style></head><body>
+<div class="copy">
+  <div class="word">mailgrant<i>.</i></div>
+  <p id="tag"></p>
+  <span class="mono">github.com/lucasmaffei/mailgrant</span>
+</div>
+<div class="phone p1"><img id="s1" alt=""></div>
+<div class="phone p2"><img id="s2" alt=""></div>
+<script src="art-text.js"></script>
+<script>
+document.getElementById('tag').textContent = A.social;
+document.getElementById('s1').src = `shots/${LANG}/inbox.png`;
+document.getElementById('s2').src = `shots/${LANG}/agents.png`;
+</script></body></html>

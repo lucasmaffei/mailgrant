@@ -251,7 +251,7 @@ textarea.editor { flex: 1; min-height: 260px; width: 100%; padding: 18px 20px; b
 
 .seg { display: flex; gap: 4px; }
 .event { display: flex; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
-.event .time { width: 40px; flex: none; padding-top: 2px; }
+.event .time { min-width: 40px; flex: none; padding-top: 2px; white-space: nowrap; }
 .event .what { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
 .event .what::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
 .event.sent .what::before { background: var(--accent); }

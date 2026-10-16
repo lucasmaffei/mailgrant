@@ -1,0 +1,42 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste tokens, passwords or real email content.**
+        Security problems go to [Security → Report a vulnerability](https://github.com/lucasmaffei/mailgrant/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Agent with scopes [read, send] on mailbox "contact"
+        2. Call `send` with …
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: mailgrant version
+      description: "`curl https://your-host/health` shows it."
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Mail server and client
+      placeholder: "Mailcow / Gmail / Dovecot · Claude Code / Codex / web app on iPhone Safari"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from the container log (redact addresses if you prefer).
+      render: text

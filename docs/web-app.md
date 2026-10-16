@@ -12,7 +12,9 @@ It is **off unless you turn it on**. Without a `web:` section in the config,
 mailgrant stays a stateless MCP/REST gateway: no web routes, no database, no
 extra dependencies loaded.
 
-> The interface is in Brazilian Portuguese for now.
+> The interface speaks English, Portuguese (Brazil), Spanish, French and
+> Simplified Chinese. It follows the browser's language until you pick one in
+> Settings; see [Adding a language](#adding-a-language).
 
 ![The web app on a phone](assets/screens.png)
 
@@ -26,7 +28,7 @@ extra dependencies loaded.
 | Writing | Reply, reply all, forward (attachments included), Cc and Bcc, attach files from the phone, a signature per mailbox. Replies stay in the thread and are filed in Sent. |
 | Drafts | What you write is saved to the mailbox's own Drafts folder a few seconds after you stop typing, so it also shows up in other mail apps. Closing the editor keeps it; opening and closing without writing leaves nothing behind. |
 | Agents | The audit trail as a timeline: reads, sends, trash moves, and every refusal — filter by sends or by refusals. |
-| Settings | Turn notifications on, pick which mailboxes notify, get a push when an agent sends mail, manage passkeys, see each agent's access. |
+| Settings | Choose the language, turn notifications on, pick which mailboxes notify, get a push when an agent sends mail, manage passkeys, see each agent's access. |
 
 Organizing works on one message or many: a star, read/unread, **archive** and
 trash. On the phone, swipe a row right to toggle read, left to archive, and
@@ -179,6 +181,23 @@ which protects a copied database but not a copied `data_dir`.
 To stop managing from the app, download the config, put its `mailboxes` and
 `agents` back in the file and set `manage: false` (or remove it). The
 database tables stay untouched.
+
+## Adding a language
+
+The app's text is written in English in `src/mailgrant/web/static/app.js`
+(`t("…")`, `tn(n, "{n} message", "{n} messages")`) and translated in
+`src/mailgrant/web/static/i18n/<code>.json`. To add one:
+
+1. Copy `i18n/fr.json` to `i18n/<code>.json` and translate the values. Keep the
+   `{placeholders}`; plurals are objects keyed by the language's
+   `Intl.PluralRules` categories (`one`, `other`, …). Keys with a `context|`
+   prefix are two texts that look the same in English.
+2. Add the code and the language's own name to `LANGS` in `app.js`, to
+   `LANGUAGES` and `MESSAGES` in `src/mailgrant/web/i18n.py` (the push
+   notifications), to the service worker's `ASSETS` in `static/sw.js`, and to
+   `pickLang()` so browsers in that language get it automatically.
+3. Run `pytest tests/test_i18n.py`: it fails on any missing, stale or
+   mistyped text.
 
 ## What is stored, and where
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0 — five languages, open source
+
+- **The web app speaks English, Português (Brasil), Español, Français and 简体中文.** It follows the device's language until you pick one in Settings; the choice applies at once, on every device, and push notifications follow it. Dates, times and sizes use the language's own formats. Adding a language is one JSON file (see CONTRIBUTING.md).
+- The API returns codes instead of Portuguese words for agent marks (`"what": "read" | "replied"`); the app words them.
+- 12-hour clocks where the language uses them ("8:05 AM"), and the agent timeline no longer wraps the time.
+- The README in five languages, with screenshots of the app in each; contributing guide, security policy, code of conduct and issue templates.
+
 ## v0.10.0 — HTML mail, shown properly
 
 - **HTML mail is shown as it was designed** instead of flattened to text, where receipts and newsletters built from layout tables came out as rows of `| | |`. The body is sanitized on the server (nh3), served as its own document with a CSP that allows no script at all and a CSP sandbox, and drawn in a sandboxed iframe that grows to its content and scales 600px layouts down to the phone's width.

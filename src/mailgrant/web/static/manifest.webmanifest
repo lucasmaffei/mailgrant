@@ -1,8 +1,8 @@
 {
   "name": "mailgrant",
   "short_name": "mailgrant",
-  "description": "Suas caixas de e-mail e o que os agentes fizeram nelas.",
-  "lang": "pt-BR",
+  "description": "Your mailboxes, and what your AI agents did in them.",
+  "lang": "en",
   "id": "/app/",
   "start_url": "/app/",
   "scope": "/app/",

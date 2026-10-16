@@ -348,8 +348,8 @@ def test_inbox_shows_agent_marks(web_client: TestClient, monkeypatch: pytest.Mon
     audit.record("lucas", "get_message", mailbox="alpha", uid="8")  # the person: no mark
     msgs = web_client.get("/app/api/inbox").json()["messages"]
     assert [(m["uid"], m["unread"], m["mark"], m["from"]) for m in msgs] == [
-        ("7", True, "hermes leu", "Ana"),
-        ("8", False, "hermes respondeu", "b@x.org"),
+        ("7", True, {"agent": "hermes", "what": "read"}, "Ana"),
+        ("8", False, {"agent": "hermes", "what": "replied"}, "b@x.org"),
     ]
     activity = web_client.get("/app/api/activity").json()["events"]
     assert {e["agent"] for e in activity} == {"hermes"}
@@ -446,12 +446,18 @@ def test_prefs_and_push_subscription(
         "threads": True,
         "images": False,
         "image_senders": [],
+        "lang": "",
+        "ui_lang": "",
         "signatures": {"alpha": ""},
     }
     prefs = web_client.put(
         "/app/api/prefs", headers=H, json={"notify": {"beta": False, "ghost": True}}
     ).json()
     assert prefs["notify"] == {"alpha": True, "beta": False}
+    prefs = web_client.put("/app/api/prefs", headers=H, json={"lang": "fr", "ui_lang": "fr"}).json()
+    assert (prefs["lang"], prefs["ui_lang"]) == ("fr", "fr")
+    bad_lang = web_client.put("/app/api/prefs", headers=H, json={"lang": "klingon"})
+    assert bad_lang.status_code == 422
     assert (
         len(web_client.get("/app/api/push/key").json()["key"]) == 87
     )  # 65-byte P-256 point, base64url
@@ -508,7 +514,8 @@ def test_agent_send_triggers_a_push(
     )
     monkeypatch.setattr("threading.Thread.start", lambda self: self.run())
     audit.record("hermes", "send", mailbox="alpha", to=["c@x.org"], message_id="<z@x>")
-    assert calls and calls[0]["title"] == "hermes enviou um e-mail"
+    # No language chosen yet: pushes go out in English.
+    assert calls and calls[0]["title"] == "hermes sent an email"
     assert "alpha@example.org" in calls[0]["body"]
 
 

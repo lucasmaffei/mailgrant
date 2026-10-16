@@ -56,7 +56,7 @@ from ..imap_client import set_flags, special_folder
 from ..imap_client import unified_search as imap_unified_search
 from ..smtp_client import SmtpError, build_message
 from ..smtp_client import send as smtp_send
-from . import html_view
+from . import html_view, i18n
 from .managed import Managed
 from .push import Pusher
 from .store import Store, now
@@ -462,9 +462,9 @@ def build_router(
             ts = 0
         mark = None
         if m.get("message_id") and m["message_id"] in replied:
-            mark = f"{replied[m['message_id']]} respondeu"
+            mark = {"agent": replied[m["message_id"]], "what": "replied"}
         elif (m.get("mailbox"), str(m.get("uid"))) in read:
-            mark = f"{read[(m['mailbox'], str(m['uid']))]} leu"
+            mark = {"agent": read[(m["mailbox"], str(m["uid"]))], "what": "read"}
         return {
             "uid": m.get("uid"),
             "mailbox": m.get("mailbox"),
@@ -664,13 +664,13 @@ def build_router(
         history = []
         for r in store.agent_marks(now() - MARK_WINDOW):
             if r["action"] == "get_message" and r["mailbox"] == mb.name and str(r["uid"]) == uid:
-                history.append({"agent": r["agent"], "what": "leu", "ts": r["ts"]})
+                history.append({"agent": r["agent"], "what": "read", "ts": r["ts"]})
             elif (
                 r["action"] == "send"
                 and msg.get("message_id")
                 and r["in_reply_to"] == msg["message_id"]
             ):
-                history.append({"agent": r["agent"], "what": "respondeu", "ts": r["ts"]})
+                history.append({"agent": r["agent"], "what": "replied", "ts": r["ts"]})
         return {
             "uid": uid,
             "mailbox": mb.name,
@@ -849,9 +849,9 @@ def build_router(
         history = []
         for r in store.agent_marks(now() - MARK_WINDOW):
             if r["action"] == "get_message" and r["mailbox"] == mb.name and str(r["uid"]) in uids:
-                history.append({"agent": r["agent"], "what": "leu", "ts": r["ts"]})
+                history.append({"agent": r["agent"], "what": "read", "ts": r["ts"]})
             elif r["action"] == "send" and r["in_reply_to"] in ids:
-                history.append({"agent": r["agent"], "what": "respondeu", "ts": r["ts"]})
+                history.append({"agent": r["agent"], "what": "replied", "ts": r["ts"]})
         out = []
         for m in msgs:
             sender, sender_addr = parseaddr(m.get("from") or "")
@@ -1157,6 +1157,10 @@ def build_router(
             # Remote images in HTML mail: always, or only from these sender domains.
             "images": bool(store.get_pref("images", False)),
             "image_senders": list(store.get_pref("image_senders", [])),
+            # "" follows the browser; ui_lang is what the browser last resolved
+            # to, so pushes sent while no page is open use the same language.
+            "lang": str(store.get_pref("lang", "")),
+            "ui_lang": str(store.get_pref("ui_lang", "")),
         }
 
     @router.get("/prefs")
@@ -1186,6 +1190,12 @@ def build_router(
                 },
             }
             store.set_pref("signatures", merged)
+        for key in ("lang", "ui_lang"):
+            if key in body:
+                value = str(body[key] or "")
+                if value and value not in i18n.LANGUAGES:
+                    raise HTTPException(422, f"unknown language {value!r}")
+                store.set_pref(key, value)
         if "images" in body:
             store.set_pref("images", bool(body["images"]))
         if isinstance(body.get("image_senders"), list):
@@ -1220,7 +1230,7 @@ def build_router(
         sent = pusher.send_all(
             {
                 "title": "mailgrant",
-                "body": "As notificações estão funcionando.",
+                "body": i18n.text(i18n.language(store), "push_works"),
                 "tag": "test",
                 "url": "/app/#/settings",
             }
@@ -1256,10 +1266,15 @@ def agent_send_notifier(cfg: Config, store: Store, pusher: Pusher):
             and entry["outcome"] == "ok"
             and store.get_pref("notify_agent_send", True)
         ):
+            lang = i18n.language(store)
             payload = {
-                "title": f"{entry['agent']} enviou um e-mail",
-                "body": f"De {addresses.get(entry.get('mailbox') or '', '')} para "
-                + ", ".join(entry.get("to") or []),
+                "title": i18n.text(lang, "agent_sent", agent=entry["agent"]),
+                "body": i18n.text(
+                    lang,
+                    "agent_sent_body",
+                    mailbox=addresses.get(entry.get("mailbox") or "", ""),
+                    to=", ".join(entry.get("to") or []),
+                ),
                 "tag": f"agent-send:{entry.get('message_id')}",
                 "url": "/app/#/agents",
             }

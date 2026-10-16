@@ -2,6 +2,8 @@
 // files as they are. Everything that comes from mail is inserted as text
 // (textContent), never as HTML. The one exception is an HTML body, which the
 // server sanitizes and serves as its own document for a sandboxed iframe.
+// Interface text goes through t(): English in the code, the other languages
+// in static/i18n/<lang>.json.
 
 const API = "/app/api";
 const WIDE = window.matchMedia("(min-width: 1000px)");
@@ -62,6 +64,77 @@ function h(tag, props = {}, ...kids) {
   return el;
 }
 
+// ── language ──────────────────────────────────────────────────────────────
+
+// English is the source and the fallback: t() looks the English text up in
+// the active language's file. A plural is found by its singular form and
+// holds one entry per Intl.PluralRules category. A "context|" prefix tells
+// apart two texts that are the same in English (Read the verb, Read the state).
+const LANGS = { en: "English", "pt-BR": "Português (Brasil)", es: "Español", fr: "Français", "zh-CN": "简体中文" };
+let lang = "en";
+let strings = {};
+const warned = new Set();
+
+const fill = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (all, k) => (k in vars ? String(vars[k]) : all)) : text);
+
+function missing(text) {
+  if (lang === "en" || warned.has(text)) return;
+  warned.add(text);
+  console.warn(`[i18n] missing ${lang}: ${text}`);
+}
+
+function t(text, vars) {
+  const s = lang === "en" ? null : strings[text];
+  if (lang !== "en" && typeof s !== "string") missing(text);
+  return fill(typeof s === "string" ? s : text.replace(/^[a-z]+\|/, ""), vars);
+}
+
+function tn(n, one, many, vars = {}) {
+  const all = { n: n.toLocaleString(lang), ...vars };
+  const forms = lang === "en" ? null : strings[one];
+  if (lang !== "en" && (!forms || typeof forms !== "object")) missing(one);
+  if (!forms || typeof forms !== "object") return fill(n === 1 ? one : many, all);
+  // CLDR files 0 under "one" in Portuguese, but people write "0 mensagens".
+  const cat = n === 0 && lang === "pt-BR" ? "other" : new Intl.PluralRules(lang).select(n);
+  return fill(forms[cat] ?? forms.other, all);
+}
+
+// The explicit choice when there is one, else the first browser language we have.
+function pickLang(choice) {
+  if (choice && LANGS[choice]) return choice;
+  for (const l of navigator.languages?.length ? navigator.languages : [navigator.language || "en"]) {
+    const x = l.toLowerCase();
+    if (x.startsWith("en")) return "en";
+    if (x.startsWith("pt")) return "pt-BR";
+    if (x.startsWith("es")) return "es";
+    if (x.startsWith("fr")) return "fr";
+    if (x.startsWith("zh")) return "zh-CN";
+  }
+  return "en";
+}
+
+// Kept on the device too, so the sign-in screen speaks the right language.
+function storedLang() {
+  try { return localStorage.getItem("mailgrant.lang") || ""; } catch (_) { return ""; }
+}
+
+async function setLanguage(choice) {
+  try { choice ? localStorage.setItem("mailgrant.lang", choice) : localStorage.removeItem("mailgrant.lang"); } catch (_) { /* private mode */ }
+  const next = pickLang(choice);
+  if (next !== "en") {
+    try {
+      const res = await fetch(`/app/static/i18n/${next}.json`);
+      if (!res.ok) throw new Error(res.status);
+      strings = await res.json();
+    } catch (_) {
+      return; // keep the current language rather than show half a page
+    }
+  } else strings = {};
+  lang = next;
+  warned.clear();
+  document.documentElement.lang = lang;
+}
+
 const ICONS = {
   inbox: '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5 5h14l2 8v6H3v-6z"/>',
   agents: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
@@ -108,11 +181,11 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   if (res.status === 401 && !path.startsWith("/auth/")) {
     state.authed = false;
     render();
-    throw new Error("Sessão encerrada. Entre de novo.");
+    throw new Error(t("Session ended. Sign in again."));
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    const err = new Error(data.detail || `Erro ${res.status}`);
+    const err = new Error(data.detail || t("Error {status}", { status: res.status }));
     err.status = res.status;
     throw err;
   }
@@ -153,19 +226,24 @@ function when(ts, { withTime = false } = {}) {
   if (Number.isNaN(d.getTime())) return "";
   const today = new Date();
   const days = Math.floor((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
-  const hm = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const hm = clock(d);
   if (days === 0) return hm;
-  if (days === 1) return withTime ? `ontem ${hm}` : "ontem";
-  if (days < 7) return d.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  if (days === 1) return withTime ? `${relDay(-1)} ${hm}` : relDay(-1);
+  if (days < 7) return d.toLocaleDateString(lang, { weekday: "short" }).replace(".", "");
+  return d.toLocaleDateString(lang, { day: "2-digit", month: "2-digit" });
 }
+
+// "8:05 AM" where clocks have 12 hours, "08:05" where they have 24.
+const clock = (d) => d.toLocaleTimeString(lang, {
+  hour: new Intl.DateTimeFormat(lang, { hour: "numeric" }).resolvedOptions().hour12 ? "numeric" : "2-digit", minute: "2-digit" });
+const relDay = (n) => new Intl.RelativeTimeFormat(lang, { numeric: "auto" }).format(n, "day");
+const capital = (s) => s.charAt(0).toLocaleUpperCase(lang) + s.slice(1);
 
 function dayLabel(iso) {
   const d = new Date(iso);
   const days = Math.floor((new Date(new Date().toDateString()) - new Date(d.toDateString())) / 86400000);
-  if (days === 0) return "Hoje";
-  if (days === 1) return "Ontem";
-  return d.toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
+  if (days === 0 || days === 1) return capital(relDay(-days));
+  return d.toLocaleDateString(lang, { day: "numeric", month: "long" });
 }
 
 function linkify(text) {
@@ -185,12 +263,12 @@ const standalone = () =>
   window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
 const boxByName = (name) => state.me?.mailboxes.find((m) => m.name === name);
-const SCOPE_WORDS = { read: "lê", mark: "marca", delete: "apaga", send: "envia" };
+const scopeWord = (s) => ({ read: t("reads"), mark: t("marks"), delete: t("deletes"), send: t("sends") })[s];
 
 // ── routing ───────────────────────────────────────────────────────────────
 
 const LIST_VIEWS = ["inbox", "starred", "sent", "drafts"];
-const VIEW_TITLES = { inbox: "Entrada", starred: "Com estrela", sent: "Enviados", drafts: "Rascunhos" };
+const viewTitle = (v) => ({ inbox: t("Inbox"), starred: t("Starred"), sent: t("Sent"), drafts: t("Drafts") })[v];
 const COMPOSE_VIEWS = ["compose", "reply", "replyall", "forward", "draft"];
 
 function route() {
@@ -278,6 +356,10 @@ async function loadMe() {
   const [me, prefs] = await Promise.all([api("/me"), api("/prefs")]);
   state.me = me;
   state.prefs = prefs;
+  // A choice made in Ajustes on another device wins; "" follows this browser.
+  if ((prefs.lang || "") !== storedLang()) await setLanguage(prefs.lang || "");
+  // Pushes are written before any page is open: tell the server what we speak.
+  if (prefs.ui_lang !== lang) api("/prefs", { method: "PUT", body: { ui_lang: lang } }).then((x) => { state.prefs = x; }).catch(() => {});
   refreshCounts();
 }
 
@@ -351,17 +433,17 @@ async function openThread(box, uid, folder, markSeen = true) {
   state.threadKey = key;
   state.thread = null;
   render();
-  const t = await api(`/thread/${enc(box)}/${enc(uid)}${folder ? `?folder=${enc(folder)}` : ""}`);
+  const th = await api(`/thread/${enc(box)}/${enc(uid)}${folder ? `?folder=${enc(folder)}` : ""}`);
   if (state.threadKey !== key) return;
-  state.thread = t;
-  const last = t.messages.length - 1;
-  state.expanded = new Set(t.messages.filter((m, i) => i === last || m.unread || m.opened).map(msgKey));
+  state.thread = th;
+  const last = th.messages.length - 1;
+  state.expanded = new Set(th.messages.filter((m, i) => i === last || m.unread || m.opened).map(msgKey));
   render();
-  const unread = t.messages.filter((m) => m.unread && !m.sent).map((m) => m.uid);
-  if (markSeen && t.can.mark && unread.length) {
-    await batch("seen", unread.map((u) => ({ mailbox: t.mailbox, uid: u })), { folder: t.folder });
-    t.messages.forEach((m) => { if (!m.sent) m.unread = false; });
-    rowsOf(t).forEach((r) => (r.unread = false));
+  const unread = th.messages.filter((m) => m.unread && !m.sent).map((m) => m.uid);
+  if (markSeen && th.can.mark && unread.length) {
+    await batch("seen", unread.map((u) => ({ mailbox: th.mailbox, uid: u })), { folder: th.folder });
+    th.messages.forEach((m) => { if (!m.sent) m.unread = false; });
+    rowsOf(th).forEach((r) => (r.unread = false));
     refreshCounts();
   }
 }
@@ -372,12 +454,12 @@ async function threadMessage(box, uid, folder) {
     state.thread.messages.find((m) => String(m.uid) === String(uid) && (!folder || m.folder === folder));
   if (!find()) await openThread(box, uid, folder, false);
   const m = find();
-  if (!m) throw new Error("Mensagem não encontrada.");
+  if (!m) throw new Error(t("Message not found."));
   return m;
 }
 
 // List rows that hold any message of this conversation.
-const rowsOf = (t) => state.list.filter((r) => r.mailbox === t.mailbox && r.members.some((u) => t.members.includes(u)));
+const rowsOf = (th) => state.list.filter((r) => r.mailbox === th.mailbox && r.members.some((u) => th.members.includes(u)));
 
 async function loadActivity() {
   const [act, agents] = await Promise.all([api(`/activity?kind=${state.actKind}`), state.agents ? null : api("/agents")]);
@@ -408,8 +490,6 @@ async function checkPush() {
 
 const batch = (action, items, extra = {}) => api("/batch", { method: "POST", body: { action, items, ...extra } });
 
-const plural = (n, one, many) => (n === 1 ? one : many.replace("#", n));
-
 async function actOnRows(action, rows) {
   if (!rows.length) return;
   // A star goes on the newest message of a conversation; taking it off clears them all.
@@ -427,8 +507,8 @@ async function actOnRows(action, rows) {
       } else gone.add(r);
     }
     if (gone.size) state.list = state.list.filter((r) => !gone.has(r));
-    if (action === "archive") toast(plural(rows.length, "Arquivada.", "# arquivadas."));
-    if (action === "trash") toast(plural(rows.length, "Movida para a lixeira.", "# na lixeira."));
+    if (action === "archive") toast(tn(rows.length, "Archived.", "{n} archived."));
+    if (action === "trash") toast(tn(rows.length, "Moved to the trash.", "{n} moved to the trash."));
     if (res.errors?.length) toast(res.errors.map((e) => `${e.mailbox}: ${e.error}`).join(" · "));
     refreshCounts();
   } catch (e) {
@@ -493,7 +573,7 @@ async function signIn() {
     await api("/auth/login/verify", { method: "POST", body: { challenge_id, credential: assertionJSON(cred) } });
     await afterSignIn();
   } catch (e) {
-    toast(e.name === "NotAllowedError" ? "Entrada cancelada." : e.message);
+    toast(e.name === "NotAllowedError" ? t("Sign-in cancelled.") : e.message);
   } finally {
     state.busy = false;
     render();
@@ -536,11 +616,11 @@ async function register(deviceName, code = state.invite) {
     });
     state.invite = null;
     state.setupCode = false;
-    toast("Passkey criada.");
+    toast(t("Passkey created."));
     await afterSignIn();
   } catch (e) {
-    toast(e.name === "NotAllowedError" ? "Cadastro cancelado."
-      : e.status === 403 ? (code === state.invite ? "Convite inválido, já usado ou vencido." : "Código de configuração errado.")
+    toast(e.name === "NotAllowedError" ? t("Setup cancelled.")
+      : e.status === 403 ? (code === state.invite ? t("This invite is invalid, used or expired.") : t("Wrong setup code."))
       : e.message);
   } finally {
     state.busy = false;
@@ -563,22 +643,22 @@ function guessDevice() {
   if (/Android/.test(ua)) return "Android";
   if (/Macintosh/.test(ua)) return "Mac";
   if (/Windows/.test(ua)) return "Windows";
-  return "Este aparelho";
+  return t("This device");
 }
 
 // ── push ──────────────────────────────────────────────────────────────────
 
 async function enablePush() {
   try {
-    if (isIOS() && !standalone()) throw new Error("Adicione à Tela de Início e abra pelo ícone.");
+    if (isIOS() && !standalone()) throw new Error(t("Add it to the Home Screen and open it from the icon."));
     const perm = await Notification.requestPermission();
-    if (perm !== "granted") throw new Error("As notificações foram bloqueadas nos ajustes do aparelho.");
+    if (perm !== "granted") throw new Error(t("Notifications are blocked in the device settings."));
     const reg = await navigator.serviceWorker.ready;
     const { key } = await api("/push/key");
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
     await api("/push/subscribe", { method: "POST", body: sub.toJSON() });
     state.push.subscribed = true;
-    toast("Notificações ativadas neste aparelho.");
+    toast(t("Notifications are on for this device."));
   } catch (e) {
     toast(e.message);
   }
@@ -636,16 +716,16 @@ function signature(box) {
   return s ? `\n\n-- \n${s}` : "";
 }
 
-const longDate = (m) => new Date(m.ts * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+const longDate = (m) => new Date(m.ts * 1000).toLocaleString(lang, { dateStyle: "short", timeStyle: "short" });
 
 function quoted(m) {
   const lines = (m.body || "").replace(/\s+$/, "").split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n");
-  return `\n\nEm ${longDate(m)}, ${m.from_raw || m.from} escreveu:\n${lines}`;
+  return `\n\n${t("On {date}, {sender} wrote:", { date: longDate(m), sender: m.from_raw || m.from })}\n${lines}`;
 }
 
 function forwarded(m) {
-  return "\n\n---------- Mensagem encaminhada ----------\n" +
-    `De: ${m.from_raw || m.from}\nData: ${longDate(m)}\nAssunto: ${m.subject}\nPara: ${m.to || ""}` +
+  return `\n\n${t("---------- Forwarded message ----------")}\n` +
+    `${t("From:")} ${m.from_raw || m.from}\n${t("Date:")} ${longDate(m)}\n${t("Subject:")} ${m.subject}\n${t("To:")} ${m.to || ""}` +
     (m.cc ? `\nCc: ${m.cc}` : "") + `\n\n${m.body || ""}`;
 }
 
@@ -670,15 +750,15 @@ function startDraft(mode, m, key) {
     state.draft = d;
     return;
   }
-  const t = state.thread;
-  const d = blankDraft(key, mode, t.mailbox);
-  d.sig = signature(t.mailbox);
+  const th = state.thread;
+  const d = blankDraft(key, mode, th.mailbox);
+  d.sig = signature(th.mailbox);
   const subject = m.subject || "";
   if (mode === "forward") {
-    d.subject = /^(fwd?|enc):/i.test(subject) ? subject : `Fwd: ${subject}`;
+    d.subject = /^(fwd?|enc|tr|rv|转发)\s*[:：]/i.test(subject) ? subject : `Fwd: ${subject}`;
     d.body = d.sig + forwarded(m);
-    d.attachments = m.attachments.map((a) => ({ kind: "ref", ref: { mailbox: t.mailbox, folder: m.folder, uid: m.uid, index: a.index },
-      filename: a.filename || "anexo", size: a.size }));
+    d.attachments = m.attachments.map((a) => ({ kind: "ref", ref: { mailbox: th.mailbox, folder: m.folder, uid: m.uid, index: a.index },
+      filename: a.filename || t("attachment"), size: a.size }));
   } else {
     const mine = myAddresses();
     // Answering my own sent message means writing to its recipients again.
@@ -695,7 +775,7 @@ function startDraft(mode, m, key) {
       d.cc = others.join(", ");
       d.showCc = !!d.cc;
     }
-    d.subject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
+    d.subject = /^(re|aw|回复)\s*[:：]/i.test(subject) ? subject : `Re: ${subject}`;
     d.body = d.sig + quoted(m);
     d.in_reply_to = m.message_id;
     d.references = `${m.references || ""} ${m.message_id || ""}`.trim();
@@ -718,7 +798,7 @@ async function openDraft(box, uid) {
     from: at > 0 ? options[at] : "", to: x.to, cc: x.cc, bcc: x.bcc, showCc: !!(x.cc || x.bcc),
     subject: x.subject, body: x.body, in_reply_to: x.in_reply_to, references: x.references,
     attachments: x.attachments.map((a) => ({ kind: "ref", ref: { mailbox: box, folder: x.folder, uid: x.uid, index: a.index },
-      filename: a.filename || "anexo", size: a.size })),
+      filename: a.filename || t("attachment"), size: a.size })),
     saved: { mailbox: box, uid: x.uid }, sig: signature(box),
   });
   d.initial = snapshot(d);
@@ -763,7 +843,7 @@ function saveDraft(d = state.draft) {
   if (!d.dirty || !worthSaving(d)) return Promise.resolve();
   d.dirty = false;
   const sent = d.attachments.slice();
-  setDraftStatus(d, "Salvando…");
+  setDraftStatus(d, t("Saving…"));
   d.saving = (async () => {
     try {
       const r = await api("/drafts", { method: "PUT", body: { ...draftPayload(d), replace: d.saved } });
@@ -777,14 +857,14 @@ function saveDraft(d = state.draft) {
           }
         });
       }
-      setDraftStatus(d, `Rascunho salvo ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`);
+      setDraftStatus(d, t("Draft saved {time}", { time: clock(new Date()) }));
       state.drafts = null;
     } catch (e) {
       d.dirty = true;
       if (e.status === 409) {
         d.noDrafts = true;
-        setDraftStatus(d, "Esta caixa não tem pasta de rascunhos");
-      } else setDraftStatus(d, "Rascunho não salvo");
+        setDraftStatus(d, t("This mailbox has no Drafts folder"));
+      } else setDraftStatus(d, t("Draft not saved"));
     } finally {
       d.saving = null;
       if (d.again) {
@@ -803,7 +883,7 @@ async function leaveDraft() {
   state.draft = null;
   if (d.dirty && !d.noDrafts && worthSaving(d)) {
     await saveDraft(d);
-    if (d.saved) toast("Rascunho salvo.");
+    if (d.saved) toast(t("Draft saved."));
   } else if (d.saving) await d.saving;
 }
 
@@ -823,7 +903,7 @@ async function discardDraft() {
   if (d.saving) await d.saving;
   if (d.saved?.uid) await api(`/drafts/${enc(d.saved.mailbox)}/${enc(d.saved.uid)}`, { method: "DELETE" }).catch((e) => toast(e.message));
   state.drafts = null;
-  toast("Rascunho descartado.");
+  toast(t("Draft discarded."));
   d.mode === "draft" ? go("/drafts") : closeCompose();
 }
 
@@ -832,13 +912,13 @@ async function addFiles(files) {
   const used = () => d.attachments.reduce((n, a) => n + (a.size || 0), 0);
   for (const f of files) {
     if (used() + f.size > MAX_ATTACH) {
-      toast("Os anexos passam de 25 MB.");
+      toast(t("Attachments are over 25 MB."));
       break;
     }
     const data = await new Promise((ok, fail) => {
       const r = new FileReader();
       r.onload = () => ok(String(r.result).split(",")[1] || "");
-      r.onerror = () => fail(new Error(`Não deu para ler ${f.name}.`));
+      r.onerror = () => fail(new Error(t("Couldn't read {name}.", { name: f.name })));
       r.readAsDataURL(f);
     });
     d.attachments.push({ kind: "upload", filename: f.name, content_type: f.type || "application/octet-stream", size: f.size, data });
@@ -849,14 +929,14 @@ async function addFiles(files) {
 
 async function sendDraft() {
   const d = state.draft;
-  if (!splitAddrs(d.to).length) return toast("Falta o destinatário.");
+  if (!splitAddrs(d.to).length) return toast(t("Add a recipient."));
   clearTimeout(saveTimer);
   state.busy = true;
   render();
   try {
     if (d.saving) await d.saving;
     await api("/send", { method: "POST", body: { ...draftPayload(d), draft: d.saved } });
-    toast("Enviado.");
+    toast(t("Sent."));
     state.draft = null;
     state.drafts = null;
     if (["reply", "replyall", "forward"].includes(d.mode)) {
@@ -898,29 +978,29 @@ function authView() {
     return h("main", { class: "auth" },
       h("div", {},
         h("div", { class: "brand" }, "mailgrant", h("i", {}, ".")),
-        h("p", {}, "Primeiro acesso. Digite o código de configuração e crie a passkey deste aparelho."),
+        h("p", {}, t("First sign-in. Enter the setup code and create this device's passkey.")),
       ),
       h("form", { class: "actions", onSubmit: (e) => { e.preventDefault(); submit(); } },
-        (codeInput = h("input", { "aria-label": "Código de configuração", placeholder: "Código de configuração",
+        (codeInput = h("input", { "aria-label": t("Setup code"), placeholder: t("Setup code"),
           autocomplete: "one-time-code", autocapitalize: "off", spellcheck: "false", required: true })),
-        (nameInput = h("input", { "aria-label": "Nome deste aparelho", value: guessDevice(), maxlength: 60 })),
-        h("button", { class: "btn", type: "submit", disabled: state.busy }, icon("face"), "Criar passkey"),
-        h("p", { class: "foot" }, "O código é o MAILGRANT_SETUP_CODE do servidor. Ele para de valer quando a primeira passkey é criada."),
+        (nameInput = h("input", { "aria-label": t("This device's name"), value: guessDevice(), maxlength: 60 })),
+        h("button", { class: "btn", type: "submit", disabled: state.busy }, icon("face"), t("Create passkey")),
+        h("p", { class: "foot" }, t("The code is the server's MAILGRANT_SETUP_CODE. It stops working once the first passkey exists.")),
       ),
     );
   }
   return h("main", { class: "auth" },
     h("div", {},
       h("div", { class: "brand" }, "mailgrant", h("i", {}, ".")),
-      h("p", {}, inviting ? "Crie a passkey deste aparelho. Ela usa o Face ID, a digital ou a senha do aparelho." : "Suas caixas num lugar só, e o que os agentes fizeram nelas."),
+      h("p", {}, inviting ? t("Create this device's passkey. It uses Face ID, your fingerprint or the device passcode.") : t("All your mailboxes in one place, and what the agents did in them.")),
     ),
     h("div", { class: "actions" },
-      inviting && (nameInput = h("input", { "aria-label": "Nome deste aparelho", value: guessDevice(), maxlength: 60 })),
+      inviting && (nameInput = h("input", { "aria-label": t("This device's name"), value: guessDevice(), maxlength: 60 })),
       h("button", { class: "btn", disabled: state.busy, onClick: () => (inviting ? register(nameInput.value.trim() || guessDevice()) : signIn()) },
-        icon("face"), inviting ? "Criar passkey" : "Entrar com passkey"),
-      h("p", { class: "foot" }, inviting ? "O convite vale uma vez só." :
-        state.hasPasskeys ? "Primeira vez neste aparelho? Gere um convite em Ajustes, num aparelho já conectado." :
-        "Nenhuma passkey ainda. No servidor, rode mailgrant invite e abra o link aqui."),
+        icon("face"), inviting ? t("Create passkey") : t("Sign in with passkey")),
+      h("p", { class: "foot" }, inviting ? t("The invite works only once.") :
+        state.hasPasskeys ? t("First time on this device? Create an invite in Settings on a device that is already signed in.") :
+        t("No passkey yet. On the server, run mailgrant invite and open the link here.")),
     ),
   );
 }
@@ -929,24 +1009,24 @@ function sidebar(r, drawer = false) {
   const boxes = state.me.mailboxes.filter((m) => m.imap);
   const inList = LIST_VIEWS.includes(r.name) || r.name === "m";
   const at = (view, box = "all") => inList && state.view === view && (view !== "inbox" || state.box === box) ? "page" : null;
-  return h("aside", { class: drawer ? "side drawer" : "side", "aria-label": "Menu" },
+  return h("aside", { class: drawer ? "side drawer" : "side", "aria-label": t("Menu") },
     h("div", { class: "wordmark" }, h("span", {}, "mailgrant", h("i", {}, ".")),
-      drawer && h("button", { type: "button", class: "icon-btn plain drawer-close", "aria-label": "Fechar menu", onClick: () => { state.drawer = false; render(); } }, icon("close"))),
-    can("send") && h("a", { href: "#/compose", class: "btn small side-compose" }, "Escrever"),
-    h("nav", { "aria-label": "Pastas" },
+      drawer && h("button", { type: "button", class: "icon-btn plain drawer-close", "aria-label": t("Close menu"), onClick: () => { state.drawer = false; render(); } }, icon("close"))),
+    can("send") && h("a", { href: "#/compose", class: "btn small side-compose" }, t("Compose")),
+    h("nav", { "aria-label": t("Folders") },
       h("a", { href: "#/inbox", "aria-current": at("inbox") },
-        h("span", {}, "Todas as caixas"), state.total ? h("span", { class: "count" }, state.total) : null),
-      h("a", { href: "#/starred", "aria-current": at("starred") }, h("span", {}, "Com estrela")),
-      h("a", { href: "#/sent", "aria-current": at("sent") }, h("span", {}, "Enviados")),
-      can("send") && h("a", { href: "#/drafts", "aria-current": at("drafts") }, h("span", {}, "Rascunhos"))),
-    h("nav", { "aria-label": "Caixas" },
-      h("span", { class: "side-label" }, "Caixas"),
+        h("span", {}, t("All mailboxes")), state.total ? h("span", { class: "count" }, state.total) : null),
+      h("a", { href: "#/starred", "aria-current": at("starred") }, h("span", {}, t("Starred"))),
+      h("a", { href: "#/sent", "aria-current": at("sent") }, h("span", {}, t("Sent"))),
+      can("send") && h("a", { href: "#/drafts", "aria-current": at("drafts") }, h("span", {}, t("Drafts")))),
+    h("nav", { "aria-label": t("Mailboxes") },
+      h("span", { class: "side-label" }, t("Mailboxes")),
       boxes.map((m) => h("a", { href: `#/inbox/${enc(m.name)}`, "aria-current": at("inbox", m.name) },
         h("span", {}, m.address), state.counts[m.name] ? h("span", { class: "count" }, state.counts[m.name]) : null)),
     ),
-    h("nav", { class: "bottom", "aria-label": "Mais" },
-      h("a", { href: "#/agents", "aria-current": r.name === "agents" ? "page" : null }, h("span", {}, "Agentes")),
-      h("a", { href: "#/settings", "aria-current": r.name === "settings" ? "page" : null }, h("span", {}, "Ajustes")),
+    h("nav", { class: "bottom", "aria-label": t("More") },
+      h("a", { href: "#/agents", "aria-current": r.name === "agents" ? "page" : null }, h("span", {}, t("Agents"))),
+      h("a", { href: "#/settings", "aria-current": r.name === "settings" ? "page" : null }, h("span", {}, t("Settings"))),
     ),
   );
 }
@@ -1019,25 +1099,25 @@ function rowView(m) {
   const cls = `row${m.unread ? " unread" : ""}${selected ? " selected" : ""}`;
   const kids = [
     state.selecting ? h("span", { class: `check${selected ? " on" : ""}`, "aria-hidden": "true" }, selected && icon("check"))
-      : m.unread && h("span", { class: "dot", "aria-label": "Não lida" }),
+      : m.unread && h("span", { class: "dot", "aria-label": t("Unread") }),
     h("div", { class: "top" },
       h("span", { class: "from" }, m.from || m.from_address),
       m.count > 1 && h("span", { class: "thread-n mono" }, m.count),
       h("span", { class: "mono" }, when(m.ts))),
-    h("span", { class: "subject" }, m.subject || "(sem assunto)"),
-    h("span", { class: "mono" }, m.mark ? `${m.mailbox_address} · ${m.mark}` : m.mailbox_address),
+    h("span", { class: "subject" }, m.subject || t("(no subject)")),
+    h("span", { class: "mono" }, m.mark ? `${m.mailbox_address} · ${markText(m.mark)}` : m.mailbox_address),
   ];
   const row = state.selecting
     ? h("button", { type: "button", class: cls, "aria-pressed": selected ? "true" : "false", onClick: () => toggleSelect(key) }, kids)
     : h("a", { class: cls, href: `#/m/${enc(m.mailbox)}/${enc(m.uid)}`, "aria-current": state.thread && rowsOf(state.thread).includes(m) ? "true" : null }, kids);
   const star = !state.selecting && (can("mark") || m.flagged) && h("button", {
     type: "button", class: `star${m.flagged ? " on" : ""}`, disabled: !can("mark"),
-    "aria-label": m.flagged ? "Tirar a estrela" : "Marcar com estrela", "aria-pressed": m.flagged ? "true" : "false",
+    "aria-label": m.flagged ? t("Remove star") : t("Add star"), "aria-pressed": m.flagged ? "true" : "false",
     onClick: (e) => { e.preventDefault(); actOnRows(m.flagged ? "unflag" : "flag", [m]); },
   }, icon("star"));
   const wrap = h("div", { class: "row-wrap" },
-    h("div", { class: "swipe-bg read", "aria-hidden": "true" }, icon(m.unread ? "mailOpen" : "mail"), m.unread ? "Lida" : "Não lida"),
-    h("div", { class: "swipe-bg arch", "aria-hidden": "true" }, "Arquivar", icon("archive")),
+    h("div", { class: "swipe-bg read", "aria-hidden": "true" }, icon(m.unread ? "mailOpen" : "mail"), m.unread ? t("Read") : t("Unread")),
+    h("div", { class: "swipe-bg arch", "aria-hidden": "true" }, t("Archive"), icon("archive")),
     row, star);
   if (!state.selecting && can("mark") && !WIDE.matches) attachGestures(wrap, row, m);
   return wrap;
@@ -1045,25 +1125,25 @@ function rowView(m) {
 
 function sentRow(m) {
   const rcpts = m.to || [];
-  const to = rcpts.length ? `Para ${rcpts[0]}${rcpts.length > 1 ? ` +${rcpts.length - 1}` : ""}` : "(sem destinatário)";
-  const by = m.sent_by ? `${m.sent_by} enviou` : m.by_you ? "você" : null;
+  const to = rcpts.length ? t("To {who}", { who: `${rcpts[0]}${rcpts.length > 1 ? ` +${rcpts.length - 1}` : ""}` }) : t("(no recipient)");
+  const by = m.sent_by ? t("{agent} sent", { agent: m.sent_by }) : m.by_you ? t("you") : null;
   return h("a", { class: "row", href: `#/m/${enc(m.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`,
     "aria-current": state.threadKey === `${m.mailbox}/${m.folder}/${m.uid}` ? "true" : null },
     h("div", { class: "top" }, h("span", { class: "from" }, to), h("span", { class: "mono" }, when(m.ts))),
-    h("span", { class: "subject" }, m.subject || "(sem assunto)"),
+    h("span", { class: "subject" }, m.subject || t("(no subject)")),
     h("span", { class: "mono" }, by ? [m.mailbox_address, " · ", h("span", { class: m.sent_by ? "by-agent" : null }, by)] : m.mailbox_address));
 }
 
 function menuButton() {
-  return h("button", { type: "button", class: "icon-btn plain menu-btn", "aria-label": "Abrir menu",
+  return h("button", { type: "button", class: "icon-btn plain menu-btn", "aria-label": t("Open menu"),
     onClick: () => { state.drawer = true; render(); } }, icon("menu"));
 }
 
 function draftRow(d) {
   return h("a", { class: "row", href: `#/draft/${enc(d.mailbox)}/${enc(d.uid)}`,
     "aria-current": state.draft?.key === `draft:${d.mailbox}/${d.uid}` ? "true" : null },
-    h("div", { class: "top" }, h("span", { class: "from" }, d.to ? `Para ${d.to}` : "(sem destinatário)"), h("span", { class: "mono" }, when(d.ts))),
-    h("span", { class: "subject" }, d.subject || "(sem assunto)"),
+    h("div", { class: "top" }, h("span", { class: "from" }, d.to ? t("To {who}", { who: d.to }) : t("(no recipient)")), h("span", { class: "mono" }, when(d.ts))),
+    h("span", { class: "subject" }, d.subject || t("(no subject)")),
     h("span", { class: "mono" }, d.mailbox_address));
 }
 
@@ -1073,11 +1153,11 @@ function selectionBar() {
   const allStarred = rows.length > 0 && rows.every((r) => r.flagged);
   const tool = (name, label, action) => h("button", { type: "button", class: "tool", disabled: !rows.length,
     onClick: async () => { await actOnRows(action, rows); stopSelecting(); } }, icon(name), h("span", {}, label));
-  return h("div", { class: "selbar", role: "toolbar", "aria-label": "Ações nas selecionadas" },
-    tool(allRead ? "mail" : "mailOpen", allRead ? "Não lida" : "Lida", allRead ? "unseen" : "seen"),
-    tool("star", allStarred ? "Sem estrela" : "Estrela", allStarred ? "unflag" : "flag"),
-    tool("archive", "Arquivar", "archive"),
-    can("delete") && tool("trash", "Lixeira", "trash"));
+  return h("div", { class: "selbar", role: "toolbar", "aria-label": t("Actions on the selected messages") },
+    tool(allRead ? "mail" : "mailOpen", allRead ? t("Unread") : t("Read"), allRead ? "unseen" : "seen"),
+    tool("star", allStarred ? t("Unstar") : t("Star"), allStarred ? "unflag" : "flag"),
+    tool("archive", t("Archive"), "archive"),
+    can("delete") && tool("trash", t("Trash"), "trash"));
 }
 
 function listPane() {
@@ -1088,52 +1168,52 @@ function listPane() {
   const doSearch = () => { state.q = search.value.trim(); state.limit = 40; loadList(true); };
   const unreadHere = state.box === "all" ? state.total : state.counts[state.box] || 0;
   const sent = state.view === "sent";
-  const title = state.view === "inbox" ? (current ? current.address : WIDE.matches ? "Todas as caixas" : "Entrada") : VIEW_TITLES[state.view];
-  const sub = sent ? "Por você e pelos agentes, em todas as caixas" :
-    state.view === "starred" ? plural(state.list.length, "1 mensagem", "# mensagens") :
-    drafts ? plural((state.drafts || []).length, "1 rascunho", "# rascunhos") :
-    `${unreadHere} não lidas · ${boxes.length} caixas`;
+  const title = state.view === "inbox" ? (current ? current.address : WIDE.matches ? t("All mailboxes") : t("Inbox")) : viewTitle(state.view);
+  const sub = sent ? t("By you and the agents, in every mailbox") :
+    state.view === "starred" ? tn(state.list.length, "{n} message", "{n} messages") :
+    drafts ? tn((state.drafts || []).length, "{n} draft", "{n} drafts") :
+    `${tn(unreadHere, "{n} unread", "{n} unread")} · ${tn(boxes.length, "{n} mailbox", "{n} mailboxes")}`;
   const n = state.selected.size;
   const chip = (label, href, pressed, count) => h("a", { class: "chip", href, "aria-pressed": pressed ? "true" : "false" },
     label, count ? h("span", { class: "n" }, count) : null);
   const head = state.selecting
     ? h("div", { class: "hdr-row sel-row" },
-        h("button", { type: "button", class: "btn quiet small bare", onClick: () => stopSelecting() }, "Cancelar"),
-        h("strong", { class: "bar-title" }, n ? plural(n, "1 selecionada", "# selecionadas") : "Selecione"),
+        h("button", { type: "button", class: "btn quiet small bare", onClick: () => stopSelecting() }, t("Cancel")),
+        h("strong", { class: "bar-title" }, n ? tn(n, "{n} selected", "{n} selected") : t("Select messages")),
         h("button", { type: "button", class: "btn quiet small bare", onClick: () => {
           state.selected = n === state.list.length ? new Set() : new Set(state.list.map(rowKey)); render(); } },
-          n === state.list.length && n ? "Nenhuma" : "Todas"))
+          n === state.list.length && n ? t("None") : t("All")))
     : h("div", { class: "hdr-row" },
         h("div", { class: "hdr-title" }, menuButton(), h("div", {}, h("h1", { class: "title" }, title), h("div", { class: "sub" }, sub))),
         h("div", { class: "hdr-actions" },
-          !drafts && !sent && can("mark") && state.list.length > 0 && h("button", { type: "button", class: "btn quiet small", onClick: () => startSelecting() }, "Selecionar"),
-          can("send") && h("a", { href: "#/compose", class: "icon-btn", "aria-label": "Escrever e-mail" }, icon("pencil"))));
-  return h("section", { class: "pane pane-list", "aria-label": "Mensagens" },
+          !drafts && !sent && can("mark") && state.list.length > 0 && h("button", { type: "button", class: "btn quiet small", onClick: () => startSelecting() }, t("Select")),
+          can("send") && h("a", { href: "#/compose", class: "icon-btn", "aria-label": t("Write an email") }, icon("pencil"))));
+  return h("section", { class: "pane pane-list", "aria-label": t("Messages") },
     h("header", { class: "hdr" },
       head,
       !drafts && !state.selecting && h("label", { class: "search" }, icon("search"),
-        search = h("input", { id: "q", type: "search", placeholder: "Buscar", "aria-label": "Buscar nas caixas", value: state.q,
+        search = h("input", { id: "q", type: "search", placeholder: t("Search"), "aria-label": t("Search the mailboxes"), value: state.q,
           onKeydown: (e) => e.key === "Enter" && doSearch(), onSearch: doSearch })),
-      !state.selecting && h("div", { class: "chips", role: "group", "aria-label": "Filtrar" },
-        chip("Todas", "#/inbox", state.view === "inbox" && state.box === "all", state.total),
-        chip("Com estrela", "#/starred", state.view === "starred"),
-        chip("Enviados", "#/sent", sent),
-        can("send") && chip("Rascunhos", "#/drafts", drafts),
+      !state.selecting && h("div", { class: "chips", role: "group", "aria-label": t("Filter") },
+        chip(t("All"), "#/inbox", state.view === "inbox" && state.box === "all", state.total),
+        chip(t("Starred"), "#/starred", state.view === "starred"),
+        chip(t("Sent"), "#/sent", sent),
+        can("send") && chip(t("Drafts"), "#/drafts", drafts),
         boxes.map((m) => chip(m.address, `#/inbox/${enc(m.name)}`, state.view === "inbox" && state.box === m.name, state.counts[m.name])))),
     h("div", { class: "scroll", "data-key": `list:${state.view}|${state.box}|${state.q}` },
       state.listErrors.map((e) => h("div", { class: "err" }, `${e.mailbox}: ${e.error}`)),
       drafts ? (
-        state.drafts === null ? h("div", { class: "empty" }, "Carregando…") :
-        !state.drafts.length ? h("div", { class: "empty" }, "Nenhum rascunho. O que você começa a escrever fica salvo aqui.") :
+        state.drafts === null ? h("div", { class: "empty" }, t("Loading…")) :
+        !state.drafts.length ? h("div", { class: "empty" }, t("No drafts. Whatever you start writing is kept here.")) :
         h("div", { class: "rows" }, state.drafts.map(draftRow))
       ) : (
-        state.loadingList && !state.list.length ? h("div", { class: "empty" }, "Carregando…") :
-        !state.list.length ? h("div", { class: "empty" }, state.q ? "Nada encontrado." : state.view === "starred" ? "Nenhuma mensagem com estrela." :
-          sent ? "Nada enviado ainda. O que você e os agentes enviarem aparece aqui." : "Nenhuma mensagem aqui.") :
+        state.loadingList && !state.list.length ? h("div", { class: "empty" }, t("Loading…")) :
+        !state.list.length ? h("div", { class: "empty" }, state.q ? t("Nothing found.") : state.view === "starred" ? t("No starred messages.") :
+          sent ? t("Nothing sent yet. What you and the agents send shows up here.") : t("No messages here.")) :
         h("div", { class: "rows" }, state.list.map(sent ? sentRow : rowView))
       ),
       !drafts && state.fetched >= state.limit && h("button", { class: "more", onClick: () => { state.limit += 40; loadList(true); } },
-        state.loadingList ? "Carregando…" : "Carregar mais antigas"),
+        state.loadingList ? t("Loading…") : t("Load older messages")),
     ),
     state.selecting && selectionBar(),
   );
@@ -1141,8 +1221,8 @@ function listPane() {
 
 // ── a conversation ─────────────────────────────────────────────────────────
 
-function replyHref(kind, t, m) {
-  return `#/${kind}/${enc(t.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`;
+function replyHref(kind, th, m) {
+  return `#/${kind}/${enc(th.mailbox)}/${enc(m.uid)}/${enc(m.folder)}`;
 }
 
 // ── HTML mail ─────────────────────────────────────────────────────────────
@@ -1153,9 +1233,9 @@ function replyHref(kind, t, m) {
 const frameHeights = new Map();
 const senderDomain = (m) => (m.from_address || "").split("@").pop().toLowerCase();
 
-function imagesShown(t, m) {
+function imagesShown(th, m) {
   const p = state.prefs || {};
-  return !m.remote_images || p.images || (p.image_senders || []).includes(senderDomain(m)) || state.showImages.has(`${t.mailbox}/${msgKey(m)}`);
+  return !m.remote_images || p.images || (p.image_senders || []).includes(senderDomain(m)) || state.showImages.has(`${th.mailbox}/${msgKey(m)}`);
 }
 
 function fitFrame(frame, key) {
@@ -1193,12 +1273,12 @@ function fitFrame(frame, key) {
   doc.querySelectorAll("img").forEach((img) => img.complete || img.addEventListener("load", scale, { once: true }));
 }
 
-function mailFrame(t, m) {
-  const images = imagesShown(t, m);
-  const key = `${t.mailbox}/${msgKey(m)}${images ? "+img" : ""}`;
-  const src = `${API}/messages/${enc(t.mailbox)}/${enc(m.uid)}/html?folder=${enc(m.folder)}${images && m.remote_images ? "&images=1" : ""}`;
+function mailFrame(th, m) {
+  const images = imagesShown(th, m);
+  const key = `${th.mailbox}/${msgKey(m)}${images ? "+img" : ""}`;
+  const src = `${API}/messages/${enc(th.mailbox)}/${enc(m.uid)}/html?folder=${enc(m.folder)}${images && m.remote_images ? "&images=1" : ""}`;
   const frame = h("iframe", {
-    class: "mail-frame", src, title: `Mensagem de ${m.from || m.from_address}`,
+    class: "mail-frame", src, title: t("Message from {who}", { who: m.from || m.from_address }),
     sandbox: "allow-same-origin allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer",
   });
   if (frameHeights.has(key)) frame.style.height = `${frameHeights.get(key)}px`;
@@ -1214,75 +1294,75 @@ function mailFrame(t, m) {
   return frame;
 }
 
-function imagesBar(t, m) {
-  if (imagesShown(t, m)) return null;
+function imagesBar(th, m) {
+  if (imagesShown(th, m)) return null;
   const domain = senderDomain(m);
-  const show = () => { state.showImages.add(`${t.mailbox}/${msgKey(m)}`); render(); };
+  const show = () => { state.showImages.add(`${th.mailbox}/${msgKey(m)}`); render(); };
   const always = async () => {
     const list = [...new Set([...(state.prefs.image_senders || []), domain])];
     state.prefs = await api("/prefs", { method: "PUT", body: { image_senders: list } });
     render();
   };
   return h("div", { class: "images-bar" },
-    h("span", { class: "grow" }, "Imagens externas bloqueadas. Elas avisam o remetente quando você abre."),
-    h("button", { type: "button", class: "btn quiet small bare", onClick: show }, "Mostrar"),
-    domain && h("button", { type: "button", class: "btn quiet small bare", onClick: always }, `Sempre de ${domain}`));
+    h("span", { class: "grow" }, t("Remote images are blocked. They tell the sender when you open the email.")),
+    h("button", { type: "button", class: "btn quiet small bare", onClick: show }, t("Show")),
+    domain && h("button", { type: "button", class: "btn quiet small bare", onClick: always }, t("Always from {domain}", { domain })));
 }
 
-function threadMessageView(t, m, isLast) {
+function threadMessageView(th, m, isLast) {
   const open = state.expanded.has(msgKey(m));
-  const many = t.messages.length > 1;
-  const who = m.sent ? "Você" : m.from || m.from_address;
+  const many = th.messages.length > 1;
+  const who = m.sent ? t("You") : m.from || m.from_address;
   const toggle = () => { open ? state.expanded.delete(msgKey(m)) : state.expanded.add(msgKey(m)); render(); };
   if (!open) {
     return h("button", { type: "button", class: `tmsg folded${m.unread ? " unread" : ""}`, onClick: toggle },
       h("div", { class: "top" }, h("span", { class: "from" }, who), h("span", { class: "mono" }, when(m.ts))),
-      h("span", { class: "snippet" }, (m.body || "").replace(/\s+/g, " ").slice(0, 140) || "(sem texto)"));
+      h("span", { class: "snippet" }, (m.body || "").replace(/\s+/g, " ").slice(0, 140) || t("(no text)")));
   }
-  const path = `/messages/${enc(t.mailbox)}/${enc(m.uid)}`;
-  const recipients = [m.to && `para ${m.to}`, m.cc && `cc ${m.cc}`].filter(Boolean).join(" · ");
+  const path = `/messages/${enc(th.mailbox)}/${enc(m.uid)}`;
+  const recipients = [m.to && t("to {who}", { who: m.to }), m.cc && `cc ${m.cc}`].filter(Boolean).join(" · ");
   return h("div", { class: "tmsg" },
     h(many ? "button" : "div", { type: many ? "button" : null, class: "tmsg-head", onClick: many ? toggle : null },
       h("div", { class: "top" }, h("strong", {}, who), h("span", { class: "mono" }, when(m.ts, { withTime: true }))),
-      h("span", { class: "mono addr" }, m.sent ? `${m.from_address} · Enviados` : m.from_address),
+      h("span", { class: "mono addr" }, m.sent ? `${m.from_address} · ${t("Sent")}` : m.from_address),
       recipients && h("span", { class: "mono addr" }, recipients)),
-    m.html ? [imagesBar(t, m), mailFrame(t, m)] : h("div", { class: "body" }, linkify(m.body || "(mensagem sem texto)")),
-    m.attachments.map((a) => h("a", { class: "attach", href: `${API}${path}/attachments/${a.index}?folder=${enc(m.folder)}`, download: a.filename || "anexo" },
-      icon("file"), h("span", {}, a.filename || "anexo"), h("span", { class: "mono" }, size(a.size)))),
-    t.can.reply && many && !isLast && h("div", { class: "tmsg-actions" },
-      h("a", { class: "btn quiet small bare", href: replyHref("reply", t, m) }, "Responder"),
-      h("a", { class: "btn quiet small bare", href: replyHref("replyall", t, m) }, "Responder a todos"),
-      h("a", { class: "btn quiet small bare", href: replyHref("forward", t, m) }, "Encaminhar")));
+    m.html ? [imagesBar(th, m), mailFrame(th, m)] : h("div", { class: "body" }, linkify(m.body || t("(this message has no text)"))),
+    m.attachments.map((a) => h("a", { class: "attach", href: `${API}${path}/attachments/${a.index}?folder=${enc(m.folder)}`, download: a.filename || t("attachment") },
+      icon("file"), h("span", {}, a.filename || t("attachment")), h("span", { class: "mono" }, size(a.size)))),
+    th.can.reply && many && !isLast && h("div", { class: "tmsg-actions" },
+      h("a", { class: "btn quiet small bare", href: replyHref("reply", th, m) }, t("Reply")),
+      h("a", { class: "btn quiet small bare", href: replyHref("replyall", th, m) }, t("Reply all")),
+      h("a", { class: "btn quiet small bare", href: replyHref("forward", th, m) }, t("Forward"))));
 }
 
-function threadActions(t) {
-  const inbox = t.messages.filter((m) => m.folder === t.folder);
+function threadActions(th) {
+  const inbox = th.messages.filter((m) => m.folder === th.folder);
   const newest = inbox[inbox.length - 1];
   const flagged = inbox.some((m) => m.flagged);
-  const items = (uids) => uids.map((uid) => ({ mailbox: t.mailbox, uid }));
+  const items = (uids) => uids.map((uid) => ({ mailbox: th.mailbox, uid }));
   const leave = () => { clearThread(); go(listHref().slice(1)); };
   const run = async (fn) => { try { await fn(); } catch (e) { toast(e.message); } render(); };
   return {
     flagged,
     star: () => run(async () => {
       if (!newest) return;
-      await batch(flagged ? "unflag" : "flag", items(flagged ? t.members : [newest.uid]), { folder: t.folder });
+      await batch(flagged ? "unflag" : "flag", items(flagged ? th.members : [newest.uid]), { folder: th.folder });
       inbox.forEach((m) => (m.flagged = !flagged && m === newest));
-      rowsOf(t).forEach((r) => (r.flagged = !flagged));
-      if (flagged && state.view === "starred") state.list = state.list.filter((r) => !rowsOf(t).includes(r));
+      rowsOf(th).forEach((r) => (r.flagged = !flagged));
+      if (flagged && state.view === "starred") state.list = state.list.filter((r) => !rowsOf(th).includes(r));
     }),
     unread: () => run(async () => {
       if (!newest) return;
-      await batch("unseen", items([newest.uid]), { folder: t.folder });
-      rowsOf(t).forEach((r) => (r.unread = true));
+      await batch("unseen", items([newest.uid]), { folder: th.folder });
+      rowsOf(th).forEach((r) => (r.unread = true));
       refreshCounts();
       leave();
     }),
     move: (action) => run(async () => {
-      const res = await batch(action, items(t.members), { folder: t.folder });
-      const gone = rowsOf(t);
+      const res = await batch(action, items(th.members), { folder: th.folder });
+      const gone = rowsOf(th);
       state.list = state.list.filter((r) => !gone.includes(r));
-      toast(action === "archive" ? "Conversa arquivada." : `Movida para ${res.moved_to?.[t.mailbox] || "a lixeira"}.`);
+      toast(action === "archive" ? t("Conversation archived.") : res.moved_to?.[th.mailbox] ? t("Moved to {folder}.", { folder: res.moved_to[th.mailbox] }) : t("Conversation moved to the trash."));
       refreshCounts();
       leave();
     }),
@@ -1290,62 +1370,66 @@ function threadActions(t) {
 }
 
 function messagePane() {
-  const t = state.thread;
-  if (!t) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, state.threadKey ? "Abrindo…" : "Selecione uma mensagem."));
-  const msgs = t.messages;
+  const th = state.thread;
+  if (!th) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, state.threadKey ? t("Opening…") : t("Select a message.")));
+  const msgs = th.messages;
   const last = msgs[msgs.length - 1];
   const opened = msgs.find((m) => m.opened) || last;
-  const a = threadActions(t);
-  const hasInbox = t.members.length > 0;
+  const a = threadActions(th);
+  const hasInbox = th.members.length > 0;
   const iconBtn = (name, label, fn, on) => h("button", { type: "button", class: `icon-btn plain${on ? " on" : ""}`, "aria-label": label, title: label,
     "aria-pressed": on === undefined ? null : on ? "true" : "false", onClick: fn }, icon(name));
   // A function, not an array: the phone bar and the desktop bar each need their own nodes.
   const tools = () => [
-    t.can.mark && hasInbox && iconBtn("star", a.flagged ? "Tirar a estrela" : "Marcar com estrela", a.star, a.flagged),
-    t.can.archive && hasInbox && iconBtn("archive", "Arquivar", () => a.move("archive")),
-    t.can.mark && hasInbox && iconBtn("mail", "Marcar como não lida", a.unread),
-    t.can.trash && hasInbox && iconBtn("trash", "Mover para a lixeira", () => a.move("trash")),
+    th.can.mark && hasInbox && iconBtn("star", a.flagged ? t("Remove star") : t("Add star"), a.star, a.flagged),
+    th.can.archive && hasInbox && iconBtn("archive", t("Archive"), () => a.move("archive")),
+    th.can.mark && hasInbox && iconBtn("mail", t("Mark as unread"), a.unread),
+    th.can.trash && hasInbox && iconBtn("trash", t("Move to the trash"), () => a.move("trash")),
   ];
-  return h("section", { class: "pane pane-detail", "aria-label": "Conversa" },
+  return h("section", { class: "pane pane-detail", "aria-label": t("Conversation") },
     h("div", { class: "detail-bar" },
-      h("a", { class: "back", href: listHref() }, icon("back"), VIEW_TITLES[state.view] || "Entrada"),
+      h("a", { class: "back", href: listHref() }, icon("back"), viewTitle(state.view) || t("Inbox")),
       h("div", { class: "bar-tools" }, tools())),
     h("div", { class: "detail-tools", hidden: true },
-      t.can.reply && h("a", { class: "btn small", href: replyHref("reply", t, last) }, icon("reply"), "Responder"),
-      t.can.reply && h("a", { class: "btn small ghost", href: replyHref("replyall", t, last) }, icon("replyAll"), "Responder a todos"),
-      t.can.reply && h("a", { class: "btn small ghost", href: replyHref("forward", t, last) }, icon("forward"), "Encaminhar"),
+      th.can.reply && h("a", { class: "btn small", href: replyHref("reply", th, last) }, icon("reply"), t("Reply")),
+      th.can.reply && h("a", { class: "btn small ghost", href: replyHref("replyall", th, last) }, icon("replyAll"), t("Reply all")),
+      th.can.reply && h("a", { class: "btn small ghost", href: replyHref("forward", th, last) }, icon("forward"), t("Forward")),
       h("span", { class: "spacer" }),
       tools()),
     h("div", { class: "scroll", "data-key": `m:${state.threadKey}` },
       h("article", { class: "msg" },
         h("div", { class: "msg-head" },
-          h("h1", {}, opened.subject || "(sem assunto)"),
-          h("span", { class: "mono" }, msgs.length > 1 ? `${msgs.length} mensagens · ${t.mailbox_address}` : t.mailbox_address),
-          t.agents.map((x) => h("span", { class: "agent-line" }, `${x.agent} ${x.what} ${when(x.ts, { withTime: true })}`))),
-        h("div", { class: "thread" }, msgs.map((m, i) => threadMessageView(t, m, i === msgs.length - 1))))),
-    t.can.reply && h("div", { class: "detail-foot" },
-      h("a", { class: "btn", href: replyHref("reply", t, last) }, "Responder"),
-      h("a", { class: "icon-btn", href: replyHref("replyall", t, last), "aria-label": "Responder a todos" }, icon("replyAll")),
-      h("a", { class: "icon-btn", href: replyHref("forward", t, last), "aria-label": "Encaminhar" }, icon("forward"))),
+          h("h1", {}, opened.subject || t("(no subject)")),
+          h("span", { class: "mono" }, msgs.length > 1 ? `${tn(msgs.length, "{n} message", "{n} messages")} · ${th.mailbox_address}` : th.mailbox_address),
+          th.agents.map((x) => h("span", { class: "agent-line" }, `${markText(x)} ${when(x.ts, { withTime: true })}`))),
+        h("div", { class: "thread" }, msgs.map((m, i) => threadMessageView(th, m, i === msgs.length - 1))))),
+    th.can.reply && h("div", { class: "detail-foot" },
+      h("a", { class: "btn", href: replyHref("reply", th, last) }, t("Reply")),
+      h("a", { class: "icon-btn", href: replyHref("replyall", th, last), "aria-label": t("Reply all") }, icon("replyAll")),
+      h("a", { class: "icon-btn", href: replyHref("forward", th, last), "aria-label": t("Forward") }, icon("forward"))),
   );
 }
 
 function size(bytes) {
   if (!bytes) return "0 KB";
-  return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  const mb = (bytes / 1048576).toLocaleString(lang, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return bytes >= 1048576 ? `${mb} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+// What an agent did to a message: the API sends a code, the words are ours.
+const markText = (x) => (x.what === "replied" ? t("{agent} replied", { agent: x.agent }) : t("{agent} read it", { agent: x.agent }));
 
 // ── the editor ─────────────────────────────────────────────────────────────
 
 function composePane() {
   const d = state.draft;
-  if (!d) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, "Abrindo…"));
+  if (!d) return h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, t("Opening…")));
   const sendable = state.me.mailboxes.filter((m) => m.smtp);
   const answering = ["reply", "replyall"].includes(d.mode) || (d.mode === "draft" && d.in_reply_to);
   const options = (answering ? sendable.filter((m) => m.name === d.mailbox) : sendable).flatMap((m) =>
     m.from_options.map((f, i) => ({ value: `${m.name}|${i === 0 ? "" : f}`, label: f })));
   const bind = (field) => (e) => { d[field] = e.target.value; touchDraft(); };
-  const title = { new: "Novo e-mail", reply: "Resposta", replyall: "Resposta a todos", forward: "Encaminhar", draft: "Rascunho" }[d.mode];
+  const title = { new: t("New email"), reply: t("title|Reply"), replyall: t("title|Reply all"), forward: t("Forward"), draft: t("Draft") }[d.mode];
   const field = (id, label, value, extra = {}) => h("div", { class: "field" }, h("label", { for: id }, label),
     h("input", { id, value, onInput: bind(id), autocapitalize: id === "subject" ? null : "off", spellcheck: id === "subject" ? null : "false",
       inputmode: id === "subject" ? null : "email", autocomplete: id === "subject" ? "off" : "email", ...extra }));
@@ -1353,54 +1437,55 @@ function composePane() {
     onChange: (e) => { addFiles([...e.target.files]).catch((err) => toast(err.message)); e.target.value = ""; } });
   return h("section", { class: "pane pane-detail", "aria-label": title },
     h("div", { class: "compose-bar" },
-      h("button", { type: "button", class: "btn quiet small", onClick: closeCompose }, "Fechar"),
+      h("button", { type: "button", class: "btn quiet small", onClick: closeCompose }, t("Close")),
       h("strong", { class: "bar-title" }, title),
       h("div", { class: "bar-tools" },
         worthSaving(d) && h("button", { type: "button", class: d.confirmDiscard ? "btn quiet small danger" : "icon-btn plain",
-          "aria-label": "Descartar rascunho", title: "Descartar rascunho", onClick: discardDraft }, d.confirmDiscard ? "Descartar?" : icon("trash")),
-        h("button", { type: "button", class: "btn small", disabled: state.busy, onClick: sendDraft }, state.busy ? "Enviando…" : "Enviar"))),
+          "aria-label": t("Discard draft"), title: t("Discard draft"), onClick: discardDraft }, d.confirmDiscard ? t("Discard?") : icon("trash")),
+        h("button", { type: "button", class: "btn small", disabled: state.busy, onClick: sendDraft }, state.busy ? t("Sending…") : t("Send")))),
     h("div", { class: "scroll col", "data-key": `c:${d.key}` },
-      h("div", { class: "field" }, h("label", { for: "from" }, "De"),
+      h("div", { class: "field" }, h("label", { for: "from" }, t("From")),
         h("select", { id: "from", onChange: (e) => changeFrom(e.target.value) },
           options.map((o) => h("option", { value: o.value, selected: o.value === `${d.mailbox}|${d.from}` ? true : null }, o.label)))),
-      h("div", { class: "field" }, h("label", { for: "to" }, "Para"),
+      h("div", { class: "field" }, h("label", { for: "to" }, t("To")),
         h("input", { id: "to", value: d.to, onInput: bind("to"), inputmode: "email", autocomplete: "email", autocapitalize: "off", spellcheck: "false" }),
-        !d.showCc && h("button", { type: "button", class: "btn quiet small bare", onClick: () => { d.showCc = true; render(); document.getElementById("cc")?.focus(); } }, "Cc Cco")),
+        !d.showCc && h("button", { type: "button", class: "btn quiet small bare", onClick: () => { d.showCc = true; render(); document.getElementById("cc")?.focus(); } }, t("Cc Bcc"))),
       d.showCc && field("cc", "Cc", d.cc),
-      d.showCc && field("bcc", "Cco", d.bcc),
-      field("subject", "Assunto", d.subject),
+      d.showCc && field("bcc", t("Bcc"), d.bcc),
+      field("subject", t("Subject"), d.subject),
       d.attachments.length > 0 && h("div", { class: "att-list" }, d.attachments.map((x, i) =>
         h("span", { class: "att" }, icon("file"), h("span", { class: "att-name" }, x.filename), h("span", { class: "mono" }, size(x.size)),
-          h("button", { type: "button", class: "att-x", "aria-label": `Remover ${x.filename}`,
+          h("button", { type: "button", class: "att-x", "aria-label": t("Remove {name}", { name: x.filename }),
             onClick: () => { d.attachments.splice(i, 1); touchDraft(); render(); } }, icon("close"))))),
-      h("textarea", { id: "body", class: "editor", "aria-label": "Mensagem", onInput: bind("body") }, d.body),
+      h("textarea", { id: "body", class: "editor", "aria-label": t("Message"), onInput: bind("body") }, d.body),
       h("div", { class: "compose-foot" },
         files,
-        h("label", { for: "files", class: "btn ghost small" }, icon("clip"), "Anexar"),
+        h("label", { for: "files", class: "btn ghost small" }, icon("clip"), t("Attach")),
         h("span", { id: "draft-status", class: "mono" }, d.status)),
-      h("p", { class: "note" }, answering ? `Vai na mesma conversa e fica salva em Enviados de ${boxByName(d.mailbox)?.address || ""}.` :
-        "Fica salva em Enviados da caixa escolhida. Enquanto você escreve, o rascunho é salvo sozinho.")),
+      h("p", { class: "note" }, answering ? t("Goes in the same conversation and is kept in the Sent folder of {mailbox}.", { mailbox: boxByName(d.mailbox)?.address || "" }) :
+        t("Kept in the Sent folder of the chosen mailbox. The draft saves itself while you write."))),
   );
 }
 
 function describe(e) {
   const to = (e.to || []).join(", ");
   if (e.outcome === "denied") {
-    return [`${e.agent} foi barrado`,
-      e.reason === "not_found" ? "Tentou usar uma caixa fora da permissão dele." :
-      e.reason === "from_address" ? "Tentou enviar com um remetente que não é dessa caixa." :
-      `Sem permissão para ${({ delete_message: "apagar", send: "enviar", mark_seen: "marcar" })[e.action] || e.action}.`];
+    const action = { delete_message: t("Not allowed to delete."), send: t("Not allowed to send."), mark_seen: t("Not allowed to mark messages.") }[e.action];
+    return [t("{agent} was blocked", { agent: e.agent }),
+      e.reason === "not_found" ? t("Tried to use a mailbox outside its permission.") :
+      e.reason === "from_address" ? t("Tried to send with a sender that isn't this mailbox's.") :
+      action || t("Not allowed to {action}.", { action: e.action })];
   }
-  if (e.outcome === "error") return [`${e.agent}: falha em ${e.action}`, "O servidor de e-mail recusou."];
-  if (e.action === "send") return [`${e.agent} enviou um e-mail`, to ? `Para ${to}.` : ""];
-  if (e.action === "get_message") return [`${e.agent} leu uma mensagem`, ""];
-  if (e.action === "mark_seen") return [`${e.agent} marcou como lida`, ""];
-  if (e.action === "delete_message") return [`${e.agent} moveu para a lixeira`, e.moved_to ? `Pasta ${e.moved_to}.` : ""];
+  if (e.outcome === "error") return [t("{agent}: {action} failed", { agent: e.agent, action: e.action }), t("The mail server refused.")];
+  if (e.action === "send") return [t("{agent} sent an email", { agent: e.agent }), to ? t("To {who}.", { who: to }) : ""];
+  if (e.action === "get_message") return [t("{agent} read a message", { agent: e.agent }), ""];
+  if (e.action === "mark_seen") return [t("{agent} marked it as read", { agent: e.agent }), ""];
+  if (e.action === "delete_message") return [t("{agent} moved it to the trash", { agent: e.agent }), e.moved_to ? t("Folder {folder}.", { folder: e.moved_to }) : ""];
   return [`${e.agent}: ${e.action}`, ""];
 }
 
 function agentsPane() {
-  const kinds = [["all", "Tudo"], ["sent", "Envios"], ["denied", "Barrados"]];
+  const kinds = [["all", t("Everything")], ["sent", t("Sends")], ["denied", t("Blocked")]];
   const events = state.activity || [];
   const groups = [];
   for (const e of events) {
@@ -1408,21 +1493,21 @@ function agentsPane() {
     if (!groups.length || groups[groups.length - 1].label !== label) groups.push({ label, items: [] });
     groups[groups.length - 1].items.push(e);
   }
-  return h("section", { class: "pane pane-detail", "aria-label": "Agentes" },
+  return h("section", { class: "pane pane-detail", "aria-label": t("Agents") },
     h("header", { class: "hdr" },
-      h("div", { class: "hdr-title" }, menuButton(), h("div", {}, h("h1", { class: "title" }, "Agentes"), h("div", { class: "sub" }, "O que cada um leu, marcou e enviou"))),
-      h("div", { class: "seg", role: "group", "aria-label": "Filtrar" }, kinds.map(([k, label]) =>
+      h("div", { class: "hdr-title" }, menuButton(), h("div", {}, h("h1", { class: "title" }, t("Agents")), h("div", { class: "sub" }, t("What each one read, marked and sent")))),
+      h("div", { class: "seg", role: "group", "aria-label": t("Filter") }, kinds.map(([k, label]) =>
         h("button", { type: "button", class: "chip", "aria-pressed": state.actKind === k ? "true" : "false",
           onClick: () => { state.actKind = k; loadActivity(); } }, label)))),
     h("div", { class: "scroll ruled", "data-key": "agents" },
-      state.activity === null ? h("div", { class: "empty" }, "Carregando…") :
-      !events.length ? h("div", { class: "empty" }, "Nenhuma atividade ainda.") :
+      state.activity === null ? h("div", { class: "empty" }, t("Loading…")) :
+      !events.length ? h("div", { class: "empty" }, t("No activity yet.")) :
       groups.map((g) => [h("h2", { class: "day" }, g.label), g.items.map((e) => {
         const [what, detail] = describe(e);
         const kind = e.outcome === "denied" ? "denied" : e.action === "send" ? "sent" : "";
         const link = e.action === "get_message" && e.outcome === "ok" && e.uid && e.mailbox_name;
         return h(link ? "a" : "div", { class: `event ${kind}`, href: link ? `#/m/${encodeURIComponent(e.mailbox_name)}/${encodeURIComponent(e.uid)}` : null },
-          h("span", { class: "mono time" }, new Date(e.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })),
+          h("span", { class: "mono time" }, clock(new Date(e.ts))),
           h("div", { class: "ev-body" },
             h("span", { class: "what" }, what), detail && h("span", { class: "ev-detail" }, detail),
             e.mailbox && h("span", { class: "mono" }, e.mailbox)));
@@ -1442,77 +1527,90 @@ function settingsPane() {
     state.newInvite = r.url;
     render();
   };
-  return h("section", { class: "pane pane-detail", "aria-label": "Ajustes" },
-    h("header", { class: "hdr" }, h("div", { class: "hdr-title" }, menuButton(), h("h1", { class: "title" }, "Ajustes"))),
+  return h("section", { class: "pane pane-detail", "aria-label": t("Settings") },
+    h("header", { class: "hdr" }, h("div", { class: "hdr-title" }, menuButton(), h("h1", { class: "title" }, t("Settings")))),
     h("div", { class: "scroll padded", "data-key": "settings" },
       state.me.manage && manageSections(),
       h("section", { class: "section" + (state.me.manage ? "" : " first") },
-        h("h2", {}, "Notificações"),
+        h("h2", {}, t("Notifications")),
         h("div", { class: "box" },
           needsInstall ? [
-            h("strong", { class: "medium" }, "No iPhone, as notificações chegam só com o mailgrant na Tela de Início."),
-            h("ol", {}, h("li", {}, "Toque em Compartilhar, no Safari."), h("li", {}, "Escolha Adicionar à Tela de Início."), h("li", {}, "Abra pelo ícone e volte aqui.")),
-          ] : !state.push.supported ? h("span", {}, "Este navegador não recebe notificações.") :
+            h("strong", { class: "medium" }, t("On iPhone, notifications only arrive with mailgrant on the Home Screen.")),
+            h("ol", {}, h("li", {}, t("Tap Share in Safari.")), h("li", {}, t("Choose Add to Home Screen.")), h("li", {}, t("Open it from the icon and come back here."))),
+          ] : !state.push.supported ? h("span", {}, t("This browser can't receive notifications.")) :
           state.push.subscribed ? [
-            h("span", {}, "Ativadas neste aparelho."),
+            h("span", {}, t("On for this device.")),
             h("div", { class: "btn-row" },
-              h("button", { class: "btn ghost small", onClick: async () => { const r = await api("/push/test", { method: "POST" }); toast(r.sent ? "Enviada." : "Nenhum aparelho recebeu."); } }, "Testar"),
-              h("button", { class: "btn quiet small", onClick: disablePush }, "Desativar")),
+              h("button", { class: "btn ghost small", onClick: async () => { const r = await api("/push/test", { method: "POST" }); toast(r.sent ? t("push|Sent.") : t("No device received it.")); } }, t("Test")),
+              h("button", { class: "btn quiet small", onClick: disablePush }, t("Turn off"))),
           ] : [
-            h("span", {}, "Receba um aviso quando chegar e-mail nas caixas escolhidas abaixo."),
-            h("button", { class: "btn", onClick: enablePush }, "Ativar notificações"),
+            h("span", {}, t("Get a notification when email arrives in the mailboxes chosen below.")),
+            h("button", { class: "btn", onClick: enablePush }, t("Turn on notifications")),
           ]),
         p && h("div", { class: "plain" },
           boxes.map((m) => h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, m.address)),
-            sw(p.notify[m.name], `Notificar ${m.address}`, () => savePrefs({ notify: { [m.name]: !p.notify[m.name] } })))),
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Avisar quando um agente enviar e-mail")),
-            sw(p.notify_agent_send, "Avisar quando um agente enviar", () => savePrefs({ notify_agent_send: !p.notify_agent_send }))))),
+            sw(p.notify[m.name], t("Notify for {mailbox}", { mailbox: m.address }), () => savePrefs({ notify: { [m.name]: !p.notify[m.name] } })))),
+          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Notify me when an agent sends email"))),
+            sw(p.notify_agent_send, t("Notify me when an agent sends email"), () => savePrefs({ notify_agent_send: !p.notify_agent_send }))))),
       p && h("section", { class: "section" },
-        h("h2", {}, "Leitura"),
+        h("h2", {}, t("Reading")),
         h("div", { class: "plain" },
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Agrupar por conversa"),
-            h("span", { class: "detail" }, "Respostas ficam juntas na lista, e a conversa mostra o que você enviou.")),
-            sw(p.threads, "Agrupar por conversa", async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })),
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Mostrar imagens externas sempre"),
-            h("span", { class: "detail" }, p.images ? "Ligado para todos os remetentes."
-              : p.image_senders.length ? `Hoje só de: ${p.image_senders.join(", ")}.`
-              : "Uma imagem externa avisa o remetente quando e de onde você abriu.")),
-            sw(p.images, "Mostrar imagens externas sempre", () => savePrefs({ images: !p.images }))),
-          p.image_senders.length > 0 && h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "Esquecer os remetentes liberados")),
-            h("button", { type: "button", class: "btn small ghost", onClick: () => savePrefs({ image_senders: [] }) }, "Esquecer")))),
+          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Group by conversation")),
+            h("span", { class: "detail" }, t("Replies stay together in the list, and the conversation shows what you sent."))),
+            sw(p.threads, t("Group by conversation"), async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })),
+          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Always show remote images")),
+            h("span", { class: "detail" }, p.images ? t("On for every sender.")
+              : p.image_senders.length ? t("For now only from: {senders}.", { senders: p.image_senders.join(", ") })
+              : t("A remote image tells the sender when and where you opened the email."))),
+            sw(p.images, t("Always show remote images"), () => savePrefs({ images: !p.images }))),
+          p.image_senders.length > 0 && h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Forget the allowed senders"))),
+            h("button", { type: "button", class: "btn small ghost", onClick: () => savePrefs({ image_senders: [] }) }, t("Forget"))))),
+      p && h("section", { class: "section" },
+        h("h2", {}, t("Language")),
+        h("div", { class: "plain" },
+          h("div", { class: "field" }, h("label", { for: "lang" }, t("Interface")),
+            h("select", { id: "lang", onChange: async (e) => {
+              const choice = e.target.value;
+              await setLanguage(choice);
+              state.prefs = await api("/prefs", { method: "PUT", body: { lang: choice, ui_lang: lang } });
+              render();
+            } },
+              h("option", { value: "", selected: !p.lang ? true : null }, t("Automatic ({language})", { language: LANGS[pickLang("")] })),
+              Object.entries(LANGS).map(([code, name]) => h("option", { value: code, lang: code, selected: p.lang === code ? true : null }, name)))))),
       p && can("send") && Object.keys(p.signatures).length > 0 && h("section", { class: "section" },
-        h("h2", {}, "Assinaturas"),
+        h("h2", {}, t("Signatures")),
         h("div", { class: "plain" }, Object.keys(p.signatures).map((name) => h("div", { class: "item sig" },
           h("label", { for: `sig-${name}`, class: "mono" }, boxByName(name)?.address || name),
-          h("textarea", { id: `sig-${name}`, class: "sig-text", rows: 3, maxlength: 2000, placeholder: "Sem assinatura",
-            onChange: async (e) => { await savePrefs({ signatures: { [name]: e.target.value } }); toast("Assinatura salva."); } },
+          h("textarea", { id: `sig-${name}`, class: "sig-text", rows: 3, maxlength: 2000, placeholder: t("No signature"),
+            onChange: async (e) => { await savePrefs({ signatures: { [name]: e.target.value } }); toast(t("Signature saved.")); } },
             p.signatures[name])))),
-        h("p", { class: "note tight" }, "Entra no fim de cada e-mail novo, resposta e encaminhamento dessa caixa.")),
+        h("p", { class: "note tight" }, t("Added at the end of every new email, reply and forward from that mailbox."))),
       h("section", { class: "section" },
         h("h2", {}, "Passkeys"),
         h("div", { class: "plain" },
           (state.passkeys || []).map((k) => h("div", { class: "item" },
-            h("span", { class: "grow" }, h("span", {}, k.name), h("span", { class: "mono" }, k.last_used_at ? `usada ${when(k.last_used_at, { withTime: true })}` : "nunca usada")),
+            h("span", { class: "grow" }, h("span", {}, k.name), h("span", { class: "mono" }, k.last_used_at ? t("used {when}", { when: when(k.last_used_at, { withTime: true }) }) : t("never used"))),
             (state.passkeys || []).length > 1 && h("button", { class: "btn quiet small", onClick: async () => {
-              await api(`/passkeys/${encodeURIComponent(k.id)}`, { method: "DELETE" }); await loadSettings(); toast("Passkey removida."); } }, "Remover"))),
-          h("div", { class: "item" }, h("button", { class: "btn quiet small link-btn", onClick: invite }, "Adicionar outro aparelho"))),
+              await api(`/passkeys/${encodeURIComponent(k.id)}`, { method: "DELETE" }); await loadSettings(); toast(t("Passkey removed.")); } }, t("Remove")))),
+          h("div", { class: "item" }, h("button", { class: "btn quiet small link-btn", onClick: invite }, t("Add another device")))),
         state.newInvite && h("div", { class: "box" },
-          h("span", {}, "Abra este link no outro aparelho. Vale 30 minutos, uma vez."),
+          h("span", {}, t("Open this link on the other device. It works once, for 30 minutes.")),
           h("span", { class: "link" }, state.newInvite),
           h("div", { class: "btn-row" },
-            h("button", { class: "btn ghost small", onClick: () => navigator.clipboard?.writeText(state.newInvite).then(() => toast("Link copiado.")) }, "Copiar"),
-            navigator.share && h("button", { class: "btn ghost small", onClick: () => navigator.share({ url: state.newInvite }).catch(() => {}) }, "Compartilhar")))),
+            h("button", { class: "btn ghost small", onClick: () => navigator.clipboard?.writeText(state.newInvite).then(() => toast(t("Link copied."))) }, t("Copy")),
+            navigator.share && h("button", { class: "btn ghost small", onClick: () => navigator.share({ url: state.newInvite }).catch(() => {}) }, t("Share"))))),
       !state.me.manage && h("section", { class: "section" },
-        h("h2", {}, "Agentes com acesso"),
+        h("h2", {}, t("Agents with access")),
         h("div", { class: "plain" }, (state.agents?.agents || []).map((a) => h("div", { class: "item" },
           h("span", { class: "grow" },
             h("span", { class: "medium" }, a.name),
-            h("span", { class: "detail" }, `${["read", "mark", "send", "delete"].filter((s) => a.scopes.includes(s)).map((s) => SCOPE_WORDS[s]).join(", ")}${a.scopes.includes("delete") ? "" : ". Não apaga"}.`)),
-          h("span", { class: "mono" }, a.mailboxes === "*" ? "todas as caixas" : `${a.mailboxes.length} caixa${a.mailboxes.length === 1 ? "" : "s"}`)))),
-        h("p", { class: "note tight" }, "As permissões dos agentes ficam no config do servidor.")),
+            h("span", { class: "detail" }, `${[["read", "mark", "send", "delete"].filter((s) => a.scopes.includes(s)).map(scopeWord).join(", "),
+              !a.scopes.includes("delete") && t("Doesn't delete")].filter(Boolean).join(". ")}.`)),
+          h("span", { class: "mono" }, a.mailboxes === "*" ? t("all mailboxes") : tn(a.mailboxes.length, "{n} mailbox", "{n} mailboxes"))))),
+        h("p", { class: "note tight" }, t("Agent permissions live in the server's config."))),
       h("section", { class: "section" },
         h("div", { class: "plain" },
-          h("div", { class: "item" }, h("button", { class: "btn quiet small bare", onClick: async () => { await api("/auth/logout", { method: "POST" }); state.authed = false; render(); } }, "Sair deste aparelho"),
+          h("div", { class: "item" }, h("button", { class: "btn quiet small bare", onClick: async () => { await api("/auth/logout", { method: "POST" }); state.authed = false; render(); } }, t("Sign out of this device")),
             h("span", { class: "grow" }), h("span", { class: "mono" }, `mailgrant ${state.me.version}`)))),
     ),
   );
@@ -1542,7 +1640,7 @@ async function sensitive(path, opts) {
     try {
       await confirmPasskey();
     } catch (err) {
-      throw new Error(err.name === "NotAllowedError" ? "Confirmação cancelada." : err.message);
+      throw new Error(err.name === "NotAllowedError" ? t("Confirmation cancelled.") : err.message);
     }
     return api(path, opts);
   }
@@ -1553,11 +1651,12 @@ async function loadAdmin() {
   state.admin = { ...boxes, ...agents };
 }
 
-const SCOPE_INFO = [
-  ["read", "Ler", "Listar, buscar e abrir mensagens."],
-  ["mark", "Marcar", "Marcar como lida ou não lida."],
-  ["delete", "Apagar", "Mover para a lixeira. Nunca apaga de vez."],
-  ["send", "Enviar", "Escrever e responder pelas caixas permitidas."],
+const SCOPES = ["read", "mark", "delete", "send"];
+const scopeInfo = () => [
+  ["read", t("scope|Read"), t("List, search and open messages.")],
+  ["mark", t("scope|Mark"), t("Mark as read or unread.")],
+  ["delete", t("scope|Delete"), t("Move to the trash. Never erases for good.")],
+  ["send", t("scope|Send"), t("Write and reply from the allowed mailboxes.")],
 ];
 
 const slug = (email) => {
@@ -1568,7 +1667,7 @@ const slug = (email) => {
 function mailboxForm(name) {
   const a = state.admin;
   const m = name === "new" ? null : a.mailboxes.find((x) => x.name === name);
-  if (name !== "new" && !m) throw new Error("Caixa não encontrada.");
+  if (name !== "new" && !m) throw new Error(t("Mailbox not found."));
   const s = a.suggested || { imap: { host: "", port: 993, tls: "ssl" }, smtp: { host: "", port: 465, tls: "ssl" } };
   const from = m?.smtp?.from_address || "";
   const display = (/^(.*?)\s*<[^>]+>$/.exec(from) || [])[1]?.replace(/^"|"$/g, "") || "";
@@ -1600,7 +1699,7 @@ function mailboxPayload(f) {
 
 function agentForm(name) {
   const a = name === "new" ? null : state.admin.agents.find((x) => x.name === name);
-  if (name !== "new" && !a) throw new Error("Agente não encontrado.");
+  if (name !== "new" && !a) throw new Error(t("Agent not found."));
   return {
     kind: "agent", key: `agent:${name}`, isNew: !a, existing: a,
     name: a?.name || "", description: a?.description || "",
@@ -1641,7 +1740,7 @@ function saveMailbox() {
     const m = f.isNew
       ? await sensitive("/admin/mailboxes", { method: "POST", body })
       : await sensitive(`/admin/mailboxes/${enc(f.existing.name)}`, { method: "PUT", body });
-    toast(f.isNew ? "Caixa adicionada." : "Caixa salva.");
+    toast(f.isNew ? t("Mailbox added.") : t("Mailbox saved."));
     state.form = null;
     state.me = await api("/me");
     refreshCounts();
@@ -1662,7 +1761,7 @@ function deleteMailbox() {
   if (!f.confirmDelete) { f.confirmDelete = true; return render(); }
   return runForm(async () => {
     await sensitive(`/admin/mailboxes/${enc(f.existing.name)}`, { method: "DELETE" });
-    toast("Caixa removida do mailgrant. Os e-mails continuam no servidor.");
+    toast(t("Mailbox removed from mailgrant. The email stays on the server."));
     state.form = null;
     state.me = await api("/me");
     go("/settings");
@@ -1671,13 +1770,13 @@ function deleteMailbox() {
 
 function agentPayload(f) {
   return { name: f.name.trim(), description: f.description.trim(),
-    mailboxes: f.all ? ["*"] : [...f.boxes], scopes: SCOPE_INFO.map(([s]) => s).filter((s) => f.scopes.has(s)) };
+    mailboxes: f.all ? ["*"] : [...f.boxes], scopes: SCOPES.filter((s) => f.scopes.has(s)) };
 }
 
 function saveAgent() {
   const f = state.form;
-  if (!f.all && !f.boxes.size) return toast("Escolha ao menos uma caixa.");
-  if (!f.scopes.size) return toast("Escolha ao menos uma permissão.");
+  if (!f.all && !f.boxes.size) return toast(t("Choose at least one mailbox."));
+  if (!f.scopes.size) return toast(t("Choose at least one permission."));
   return runForm(async () => {
     const body = agentPayload(f);
     if (f.isNew) {
@@ -1688,7 +1787,7 @@ function saveAgent() {
       go(`/settings/agent/${enc(r.agent.name)}`);
     } else {
       await sensitive(`/admin/agents/${enc(f.existing.name)}`, { method: "PUT", body });
-      toast("Permissões salvas. Valem a partir de agora.");
+      toast(t("Permissions saved. They apply from now on."));
       state.form = null;
       state.agents = null;
       go("/settings");
@@ -1712,7 +1811,7 @@ function deleteAgent() {
   if (!f.confirmDelete) { f.confirmDelete = true; return render(); }
   return runForm(async () => {
     await sensitive(`/admin/agents/${enc(f.existing.name)}`, { method: "DELETE" });
-    toast(`${f.existing.name} não acessa mais nada.`);
+    toast(t("{agent} no longer has access to anything.", { agent: f.existing.name }));
     state.form = null;
     state.agents = null;
     go("/settings");
@@ -1731,17 +1830,17 @@ function snippet(r) {
   return JSON.stringify({ mcpServers: { mailgrant: { url: r.mcp_url, headers: { Authorization: `Bearer ${r.token}` } } } }, null, 2);
 }
 
-const copy = (text, done) => navigator.clipboard?.writeText(text).then(() => toast(done)).catch(() => toast("Não deu para copiar."));
+const copy = (text, done) => navigator.clipboard?.writeText(text).then(() => toast(done)).catch(() => toast(t("Couldn't copy.")));
 
 function revealBox(r) {
   return h("div", { class: "box reveal" },
-    h("strong", { class: "medium" }, r.created ? `Token do ${r.agent}` : `Novo token do ${r.agent}`),
-    h("span", {}, r.created ? "Guarde agora: ele não aparece de novo." :
-      "O token anterior parou de funcionar. Troque no agente agora; este não aparece de novo."),
+    h("strong", { class: "medium" }, r.created ? t("Token for {agent}", { agent: r.agent }) : t("New token for {agent}", { agent: r.agent })),
+    h("span", {}, r.created ? t("Save it now: it won't be shown again.") :
+      t("The previous token stopped working. Change it in the agent now; this one won't be shown again.")),
     h("code", { class: "link" }, r.token),
     h("div", { class: "btn-row" },
-      h("button", { class: "btn small", onClick: () => copy(r.token, "Token copiado.") }, "Copiar token"),
-      h("button", { class: "btn ghost small", onClick: () => copy(snippet(r), "Configuração copiada.") }, "Copiar configuração MCP")),
+      h("button", { class: "btn small", onClick: () => copy(r.token, t("Token copied.")) }, t("Copy token")),
+      h("button", { class: "btn ghost small", onClick: () => copy(snippet(r), t("Configuration copied.")) }, t("Copy MCP configuration"))),
     h("pre", { class: "mcp-snippet" }, snippet(r)));
 }
 
@@ -1751,14 +1850,14 @@ function formField(id, label, value, onInput, extra = {}) {
 }
 
 function tlsSelect(id, value, onChange) {
-  return h("select", { id, onChange }, [["ssl", "SSL/TLS"], ["starttls", "STARTTLS"], ["none", "Nenhuma"]].map(([v, l]) =>
+  return h("select", { id, onChange }, [["ssl", "SSL/TLS"], ["starttls", "STARTTLS"], ["none", t("None (TLS)")]].map(([v, l]) =>
     h("option", { value: v, selected: v === value ? true : null }, l)));
 }
 
 function serverRows(prefix, part, f) {
   return [
-    formField(`${prefix}-host`, "Servidor", part.host, (e) => { part.host = e.target.value; }),
-    h("div", { class: "field" }, h("label", { for: `${prefix}-port` }, "Porta"),
+    formField(`${prefix}-host`, t("Server"), part.host, (e) => { part.host = e.target.value; }),
+    h("div", { class: "field" }, h("label", { for: `${prefix}-port` }, t("Port")),
       h("input", { id: `${prefix}-port`, value: part.port, inputmode: "numeric", class: "short", onInput: (e) => { part.port = e.target.value; } }),
       tlsSelect(`${prefix}-tls`, part.tls, (e) => { part.tls = e.target.value; })),
   ];
@@ -1772,7 +1871,7 @@ function toggleRow(label, on, onClick, detail) {
 function formPane(title, body, actions) {
   return h("section", { class: "pane pane-detail", "aria-label": title },
     h("div", { class: "compose-bar" },
-      h("a", { class: "btn quiet small", href: "#/settings" }, "Voltar"),
+      h("a", { class: "btn quiet small", href: "#/settings" }, t("Back")),
       h("strong", { class: "bar-title" }, title),
       actions || h("span", { class: "bar-spacer" })),
     h("div", { class: "scroll padded", "data-key": `form:${state.form?.key || state.reveal?.agent}` }, body));
@@ -1780,113 +1879,113 @@ function formPane(title, body, actions) {
 
 function mailboxPane() {
   const f = state.form;
-  if (!f) return formPane("Caixa", h("div", { class: "empty" }, "Abrindo…"));
+  if (!f) return formPane(t("Mailbox"), h("div", { class: "empty" }, t("Opening…")));
   const set = (k) => (e) => { f[k] = e.target.value; if (k === "email" && f.isNew && !f.nameTouched) { f.name = slug(f.email); const n = document.getElementById("mb-name"); if (n) n.value = f.name; } };
-  const t = f.test;
-  return formPane(f.isNew ? "Nova caixa" : f.email, [
+  const th = f.test;
+  return formPane(f.isNew ? t("New mailbox") : f.email, [
     h("div", { class: "plain" },
-      formField("mb-email", "E-mail", f.email, set("email"), { type: "email", inputmode: "email", disabled: !f.isNew ? true : null }),
-      formField("mb-password", "Senha", f.password, set("password"), { type: "password", autocomplete: "new-password",
-        placeholder: f.isNew ? "Senha ou senha de app" : "Mantida (deixe vazio)" }),
-      f.smtpOn && formField("mb-display", "Nome", f.display, set("display"), { placeholder: "Como aparece para quem recebe", autocapitalize: null, spellcheck: null }),
-      f.isNew && formField("mb-name", "Apelido", f.name, (e) => { f.name = e.target.value; f.nameTouched = true; }, { placeholder: "contato-empresa" })),
-    f.isNew && h("p", { class: "note" }, "O apelido é como os agentes chamam a caixa. Não muda depois."),
+      formField("mb-email", t("Email"), f.email, set("email"), { type: "email", inputmode: "email", disabled: !f.isNew ? true : null }),
+      formField("mb-password", t("Password"), f.password, set("password"), { type: "password", autocomplete: "new-password",
+        placeholder: f.isNew ? t("Password or app password") : t("Kept (leave empty)") }),
+      f.smtpOn && formField("mb-display", t("Name"), f.display, set("display"), { placeholder: t("How recipients see it"), autocapitalize: null, spellcheck: null }),
+      f.isNew && formField("mb-name", t("Nickname"), f.name, (e) => { f.name = e.target.value; f.nameTouched = true; }, { placeholder: "contato-empresa" })),
+    f.isNew && h("p", { class: "note" }, t("The nickname is how agents refer to the mailbox. It can't change later.")),
     h("section", { class: "section" },
-      h("h2", {}, "Receber (IMAP)"),
+      h("h2", {}, t("Receive (IMAP)")),
       h("div", { class: "plain" },
-        toggleRow("Ler e organizar e-mails", f.imapOn, () => { f.imapOn = !f.imapOn; render(); }),
+        toggleRow(t("Read and organize email"), f.imapOn, () => { f.imapOn = !f.imapOn; render(); }),
         f.imapOn && serverRows("imap", f.imap, f))),
     h("section", { class: "section" },
-      h("h2", {}, "Enviar (SMTP)"),
+      h("h2", {}, t("Send (SMTP)")),
       h("div", { class: "plain" },
-        toggleRow("Enviar e-mails", f.smtpOn, () => { f.smtpOn = !f.smtpOn; render(); }),
+        toggleRow(t("Send email"), f.smtpOn, () => { f.smtpOn = !f.smtpOn; render(); }),
         f.smtpOn && serverRows("smtp", f.smtp, f),
-        f.smtpOn && toggleRow("Mesmo usuário e senha do IMAP", f.sameLogin, () => { f.sameLogin = !f.sameLogin; render(); }),
-        f.smtpOn && !f.sameLogin && formField("smtp-user", "Usuário", f.smtpUser, set("smtpUser")),
-        f.smtpOn && !f.sameLogin && formField("smtp-password", "Senha", f.smtpPassword, set("smtpPassword"),
-          { type: "password", autocomplete: "new-password", placeholder: f.isNew ? "" : "Mantida (deixe vazio)" }),
-        f.smtpOn && f.imapOn && formField("smtp-copy", "Cópia em", f.saveCopy, set("saveCopy"), { placeholder: "Sent" }))),
+        f.smtpOn && toggleRow(t("Same username and password as IMAP"), f.sameLogin, () => { f.sameLogin = !f.sameLogin; render(); }),
+        f.smtpOn && !f.sameLogin && formField("smtp-user", t("Username"), f.smtpUser, set("smtpUser")),
+        f.smtpOn && !f.sameLogin && formField("smtp-password", t("Password"), f.smtpPassword, set("smtpPassword"),
+          { type: "password", autocomplete: "new-password", placeholder: f.isNew ? "" : t("Kept (leave empty)") }),
+        f.smtpOn && f.imapOn && formField("smtp-copy", t("Copy in"), f.saveCopy, set("saveCopy"), { placeholder: "Sent" }))),
     h("section", { class: "section" },
       h("div", { class: "btn-row padded-x" },
-        h("button", { class: "btn ghost small", disabled: state.busy, onClick: testMailbox }, state.busy && !t ? "Testando…" : "Testar conexão"),
-        t && ["imap", "smtp"].filter((p) => t[p]).map((p) => h("span", { class: `test ${t[p].ok ? "ok" : "bad"}` },
-          `${p.toUpperCase()}: ${t[p].ok ? (p === "imap" ? `ok, ${t[p].folders.length} pastas` : "ok") : t[p].error}`)))),
+        h("button", { class: "btn ghost small", disabled: state.busy, onClick: testMailbox }, state.busy && !th ? t("Testing…") : t("Test connection")),
+        th && ["imap", "smtp"].filter((p) => th[p]).map((p) => h("span", { class: `test ${th[p].ok ? "ok" : "bad"}` },
+          `${p.toUpperCase()}: ${th[p].ok ? (p === "imap" ? tn(th[p].folders.length, "ok, {n} folder", "ok, {n} folders") : "ok") : th[p].error}`)))),
     !f.isNew && h("section", { class: "section" },
-      h("h2", {}, "Quem usa"),
-      h("p", { class: "note tight" }, f.existing.agents.length ? `Agentes: ${f.existing.agents.join(", ")}.` : "Nenhum agente tem acesso a esta caixa."),
+      h("h2", {}, t("Who uses it")),
+      h("p", { class: "note tight" }, f.existing.agents.length ? t("Agents: {agents}.", { agents: f.existing.agents.join(", ") }) : t("No agent has access to this mailbox.")),
       h("div", { class: "plain" }, h("div", { class: "item" },
         h("button", { class: `btn quiet small bare${f.confirmDelete ? " danger" : ""}`, disabled: state.busy, onClick: deleteMailbox },
-          f.confirmDelete ? "Tirar do mailgrant? Toque de novo" : "Remover caixa do mailgrant")))),
-  ], h("button", { class: "btn small", disabled: state.busy, onClick: saveMailbox }, f.isNew ? "Adicionar" : "Salvar"));
+          f.confirmDelete ? t("Remove from mailgrant? Tap again") : t("Remove mailbox from mailgrant"))))),
+  ], h("button", { class: "btn small", disabled: state.busy, onClick: saveMailbox }, f.isNew ? t("Add") : t("Save")));
 }
 
 function agentPane() {
   const f = state.form;
   const r = state.reveal;
-  if (!f) return formPane("Agente", r ? revealBox(r) : h("div", { class: "empty" }, "Abrindo…"));
+  if (!f) return formPane(t("Agent"), r ? revealBox(r) : h("div", { class: "empty" }, t("Opening…")));
   const boxes = state.me.mailboxes;
-  return formPane(f.isNew ? "Novo agente" : f.existing.name, [
+  return formPane(f.isNew ? t("New agent") : f.existing.name, [
     r && h("section", { class: "section first" }, revealBox(r)),
     h("div", { class: "plain" },
-      f.isNew && formField("ag-name", "Nome", f.name, (e) => { f.name = e.target.value; }, { placeholder: "hermes" }),
-      formField("ag-desc", "Descrição", f.description, (e) => { f.description = e.target.value; },
-        { placeholder: "Para que serve", autocapitalize: null, spellcheck: null })),
+      f.isNew && formField("ag-name", t("Name"), f.name, (e) => { f.name = e.target.value; }, { placeholder: "hermes" }),
+      formField("ag-desc", t("Description"), f.description, (e) => { f.description = e.target.value; },
+        { placeholder: t("What it is for"), autocapitalize: null, spellcheck: null })),
     h("section", { class: "section" },
-      h("h2", {}, "Pode"),
-      h("div", { class: "plain" }, SCOPE_INFO.map(([s, label, detail]) =>
+      h("h2", {}, t("Can")),
+      h("div", { class: "plain" }, scopeInfo().map(([s, label, detail]) =>
         toggleRow(label, f.scopes.has(s), () => { f.scopes.has(s) ? f.scopes.delete(s) : f.scopes.add(s); render(); }, detail)))),
     h("section", { class: "section" },
-      h("h2", {}, "Nas caixas"),
+      h("h2", {}, t("In the mailboxes")),
       h("div", { class: "plain" },
-        toggleRow("Todas as caixas", f.all, () => { f.all = !f.all; render(); }, "Inclui as que você adicionar depois."),
+        toggleRow(t("All mailboxes"), f.all, () => { f.all = !f.all; render(); }, t("Includes the ones you add later.")),
         !f.all && boxes.map((m) => toggleRow(m.address, f.boxes.has(m.name), () => {
           f.boxes.has(m.name) ? f.boxes.delete(m.name) : f.boxes.add(m.name); render(); })))),
     !f.isNew && h("section", { class: "section" },
-      h("h2", {}, "Token"),
-      h("p", { class: "note tight" }, f.existing.token_created_at ? `Gerado em ${new Date(f.existing.token_created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}.` : "Veio do config."),
+      h("h2", {}, t("Token")),
+      h("p", { class: "note tight" }, f.existing.token_created_at ? t("Created {date}.", { date: new Date(f.existing.token_created_at).toLocaleString(lang, { dateStyle: "short", timeStyle: "short" }) }) : t("Came from the config.")),
       h("div", { class: "plain" },
         h("div", { class: "item" }, h("button", { class: `btn quiet small bare${f.confirmRotate ? " danger" : ""}`, disabled: state.busy, onClick: rotateToken },
-          f.confirmRotate ? "O token atual vai parar de funcionar. Toque de novo" : "Gerar novo token")),
+          f.confirmRotate ? t("The current token will stop working. Tap again") : t("Create a new token"))),
         h("div", { class: "item" }, h("button", { class: `btn quiet small bare${f.confirmDelete ? " danger" : ""}`, disabled: state.busy, onClick: deleteAgent },
-          f.confirmDelete ? `Tirar todo o acesso de ${f.existing.name}? Toque de novo` : "Remover agente")))),
-  ], h("button", { class: "btn small", disabled: state.busy, onClick: saveAgent }, f.isNew ? "Criar" : "Salvar"));
+          f.confirmDelete ? t("Take away all of {agent}'s access? Tap again", { agent: f.existing.name }) : t("Remove agent"))))),
+  ], h("button", { class: "btn small", disabled: state.busy, onClick: saveAgent }, f.isNew ? t("Create") : t("Save")));
 }
 
 function manageSections() {
   const a = state.admin;
-  if (!a) return h("section", { class: "section" }, h("div", { class: "empty" }, "Carregando…"));
-  const scopeText = (s) => SCOPE_INFO.filter(([k]) => s.includes(k)).map(([, l]) => l.toLowerCase()).join(", ");
+  if (!a) return h("section", { class: "section" }, h("div", { class: "empty" }, t("Loading…")));
+  const scopeText = (s) => scopeInfo().filter(([k]) => s.includes(k)).map(([, l]) => l.toLocaleLowerCase(lang)).join(", ");
   return [
     h("section", { class: "section first" },
-      h("h2", {}, "Caixas de e-mail"),
+      h("h2", {}, t("Email mailboxes")),
       h("div", { class: "plain" },
         a.mailboxes.map((m) => h("a", { class: "item link-item", href: `#/settings/mailbox/${enc(m.name)}` },
           h("span", { class: "grow" }, h("span", {}, m.address),
-            h("span", { class: "mono" }, [m.imap && "recebe", m.smtp && "envia"].filter(Boolean).join(" · "))),
+            h("span", { class: "mono" }, [m.imap && t("receives"), m.smtp && t("sends")].filter(Boolean).join(" · "))),
           h("span", { class: "mono" }, m.name))),
-        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/mailbox/new" }, "Adicionar caixa")))),
+        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/mailbox/new" }, t("Add mailbox"))))),
     h("section", { class: "section" },
-      h("h2", {}, "Agentes"),
+      h("h2", {}, t("Agents")),
       h("div", { class: "plain" },
         a.agents.map((x) => h("a", { class: "item link-item", href: `#/settings/agent/${enc(x.name)}` },
           h("span", { class: "grow" }, h("span", { class: "medium" }, x.name),
             h("span", { class: "detail" }, `${scopeText(x.scopes)}${x.description ? ` · ${x.description}` : ""}`)),
-          h("span", { class: "mono" }, x.mailboxes === "*" ? "todas" : `${x.mailboxes.length} caixa${x.mailboxes.length === 1 ? "" : "s"}`))),
-        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/agent/new" }, "Adicionar agente"))),
-      h("p", { class: "note tight" }, "Mudanças valem na hora, sem reiniciar. Salvar pede o Face ID de novo.")),
+          h("span", { class: "mono" }, x.mailboxes === "*" ? t("all") : tn(x.mailboxes.length, "{n} mailbox", "{n} mailboxes")))),
+        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/agent/new" }, t("Add agent")))),
+      h("p", { class: "note tight" }, t("Changes apply at once, without a restart. Saving asks for Face ID again."))),
     h("section", { class: "section" },
       h("div", { class: "plain" }, h("div", { class: "item" },
-        h("span", { class: "grow" }, h("span", {}, "Baixar config"), h("span", { class: "detail" }, "Cópia de segurança com as senhas. Guarde em lugar seguro.")),
-        h("button", { class: "btn ghost small", onClick: exportConfig }, "Baixar")))),
+        h("span", { class: "grow" }, h("span", {}, t("Download config")), h("span", { class: "detail" }, t("A backup with the passwords. Keep it somewhere safe."))),
+        h("button", { class: "btn ghost small", onClick: exportConfig }, t("Download"))))),
   ];
 }
 
 function tabs(r) {
   const tab = (href, name, label, active) => h("a", { class: "tab", href, "aria-current": active ? "page" : null }, icon(name), label);
-  return h("nav", { class: "tabs", "aria-label": "Seções" },
-    tab("#/inbox", "inbox", "Entrada", LIST_VIEWS.includes(r.name) || r.name === "m"),
-    tab("#/agents", "agents", "Agentes", r.name === "agents"),
-    tab("#/settings", "settings", "Ajustes", r.name === "settings"));
+  return h("nav", { class: "tabs", "aria-label": t("Sections") },
+    tab("#/inbox", "inbox", t("Inbox"), LIST_VIEWS.includes(r.name) || r.name === "m"),
+    tab("#/agents", "agents", t("Agents"), r.name === "agents"),
+    tab("#/settings", "settings", t("Settings"), r.name === "settings"));
 }
 
 function render() {
@@ -1909,7 +2008,7 @@ function render() {
   else if (r.name === "settings" && r.args[0] === "mailbox") detail = mailboxPane();
   else if (r.name === "settings" && r.args[0] === "agent") detail = agentPane();
   else if (r.name === "settings") detail = settingsPane();
-  else detail = state.view === "drafts" ? h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, "Escolha um rascunho para continuar.")) : messagePane();
+  else detail = state.view === "drafts" ? h("section", { class: "pane pane-detail" }, h("div", { class: "empty" }, t("Choose a draft to continue."))) : messagePane();
   document.body.dataset.view = ["agents", "settings"].includes(r.name) ? "page" :
     r.name === "m" || COMPOSE_VIEWS.includes(r.name) ? "detail" : "list";
   document.body.dataset.selecting = state.selecting ? "1" : "";
@@ -1928,6 +2027,7 @@ function render() {
 // ── boot ──────────────────────────────────────────────────────────────────
 
 async function boot() {
+  await setLanguage(storedLang());
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js", { scope: "/app/" }).catch(() => {});
   window.addEventListener("hashchange", onRoute);
   WIDE.addEventListener("change", render);

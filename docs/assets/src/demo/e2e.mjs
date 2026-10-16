@@ -1,66 +1,77 @@
+// Real screenshots of the web app for the README, in one language:
+// node e2e.mjs <lang> <invite file> <out dir>   (run.sh calls it for each language)
+// Signs in with a virtual WebAuthn authenticator, walks the screens and fails
+// on any console or CSP error.
 import { chromium, devices } from 'playwright';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const invite = fs.readFileSync('invite.txt', 'utf8').trim();
-const out = process.argv[2] || 'shots';
+const [lang = 'en', inviteFile = 'invite.txt', out = 'shots'] = process.argv.slice(2);
+const here = path.dirname(fileURLToPath(import.meta.url));
+const dict = lang === 'en' ? {} : JSON.parse(fs.readFileSync(path.resolve(here, `../../../../src/mailgrant/web/static/i18n/${lang}.json`), 'utf8'));
+// The text a button shows in this language (keys may carry a "context|" prefix).
+const L = (key) => { const v = dict[key]; return typeof v === 'string' ? v : key.replace(/^[a-z]+\|/, ''); };
+const { CONTENT } = JSON.parse(fs.readFileSync(path.resolve(here, 'content.json'), 'utf8'));
+const C = CONTENT[lang];
+const clinic = [...C.mail.contact].sort((a, b) => b[2] - a[2] || a[3] - b[3])[2][1];
+const locale = { en: 'en-US', 'pt-BR': 'pt-BR', es: 'es-ES', fr: 'fr-FR', 'zh-CN': 'zh-CN' }[lang];
+
+const invite = fs.readFileSync(inviteFile, 'utf8').trim();
+const base = invite.replace(/#.*/, '');
 fs.mkdirSync(out, { recursive: true });
 const problems = [];
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ ...devices['iPhone 14 Pro'], deviceScaleFactor: 3, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo' });
+const ctx = await browser.newContext({ ...devices['iPhone 14 Pro'], deviceScaleFactor: 3, locale, timezoneId: 'America/Sao_Paulo' });
 const page = await ctx.newPage();
-page.on('console', (m) => { if (m.type() === 'error' || /Content Security Policy/i.test(m.text())) problems.push(`console: ${m.text()}`); });
+page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning' || /Content Security Policy/i.test(m.text())) problems.push(`console: ${m.text()}`); });
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
 const cdp = await ctx.newCDPSession(page);
 await cdp.send('WebAuthn.enable');
 await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
 const step = async (name, fn) => { try { await fn(); console.log('ok   ', name); } catch (e) { console.log('FAIL ', name, '-', e.message.split('\n')[0]); problems.push(`${name}: ${e.message.split('\n')[0]}`); } };
+const shot = async (name) => { await page.waitForTimeout(3600); await page.screenshot({ path: `${out}/${name}.png` }); };
 
-await step('abre convite', async () => { await page.goto(invite); await page.getByRole('button', { name: 'Criar passkey' }).waitFor(); });
-await page.screenshot({ path: `${out}/01-convite.png` });
-await step('cria passkey e entra', async () => { await page.getByRole('button', { name: 'Criar passkey' }).click(); await page.locator('.row').first().waitFor({ timeout: 15000 }); });
-await step('estrela na conversa', async () => { await page.locator('.row-wrap', { hasText: 'Orçamento' }).locator('.star').click(); await page.locator('.star.on').waitFor(); });
-await page.waitForTimeout(3600);
-await page.screenshot({ path: `${out}/02-entrada.png` });
-await step('marca do hermes na lista', async () => { await page.getByText('hermes leu').first().waitFor(); });
-await step('filtra por caixa', async () => { await page.locator('.chip', { hasText: 'financeiro@exemplo' }).click(); await page.waitForFunction(() => document.querySelectorAll('.row').length === 3); });
-await step('volta para todas', async () => { await page.locator('.chip', { hasText: 'Todas' }).click(); await page.waitForFunction(() => document.querySelectorAll('.row').length === 8); });
-await step('abre a conversa', async () => { await page.locator('.row', { hasText: 'Orçamento' }).click(); await page.getByRole('heading', { name: 'Orçamento para o e-mail da clínica' }).waitFor(); await page.locator('.tmsg').nth(2).waitFor(); });
+await step('sign in', async () => {
+  await page.goto(invite);
+  await page.getByRole('button', { name: L('Create passkey') }).click();
+  await page.locator('.row').first().waitFor({ timeout: 15000 });
+});
+await step('star the conversation', async () => { await page.locator('.row-wrap', { hasText: clinic }).locator('.star').click(); await page.locator('.star.on').waitFor(); });
+await shot('inbox');
+await step('open the conversation', async () => {
+  await page.locator('.row', { hasText: clinic }).click();
+  await page.getByRole('heading', { name: clinic }).waitFor();
+  await page.locator('.tmsg').nth(2).waitFor();
+});
 // Fold the first message so the shot shows the answer from Sent and the attachment.
 await page.locator('.tmsg-head').first().click();
-await page.waitForTimeout(3600);
-await page.screenshot({ path: `${out}/03-mensagem.png` });
-await step('linha do hermes na mensagem', async () => { await page.locator('.agent-line', { hasText: 'hermes leu' }).waitFor(); });
-await step('responder a todos com anexo', async () => {
-  await page.locator('.detail-foot [aria-label="Responder a todos"]').click(); await page.locator('#cc').waitFor();
-  await page.locator('#files').setInputFiles({ name: 'proposta-lumahost.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n'.repeat(4000)) });
-  await page.locator('.att', { hasText: 'proposta-lumahost.pdf' }).waitFor();
+await shot('conversation');
+await step('reply all with an attachment', async () => {
+  await page.locator('.detail-foot a[href*="replyall"]').click();
+  await page.locator('#cc').waitFor();
+  await page.locator('#files').setInputFiles({ name: C.attachment, mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n'.repeat(4000)) });
+  await page.locator('.att', { hasText: C.attachment }).waitFor();
 });
-await page.locator('#body').evaluate((el) => { el.value = 'Combinado! Segue a proposta para as seis caixas. A migração das mensagens antigas entra sem custo.' + el.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); });
-await page.waitForTimeout(3600);
-await page.screenshot({ path: `${out}/04-resposta.png` });
-await step('envia', async () => { await page.getByRole('button', { name: 'Enviar' }).click(); await page.getByText('Enviado.').waitFor(); });
-await step('agentes', async () => { await page.goto(invite.replace(/#.*/, '#/agents')); await page.locator('.event').first().waitFor(); });
-await page.waitForTimeout(3600);
-await page.screenshot({ path: `${out}/05-agentes.png` });
-await step('ajustes', async () => { await page.goto(invite.replace(/#.*/, '#/settings')); await page.getByText('Passkeys').waitFor(); await page.locator('.switch').first().waitFor(); });
-await page.waitForTimeout(3600);
-await page.screenshot({ path: `${out}/06-ajustes.png`, fullPage: false });
-await step('preferência salva', async () => { const sw = page.locator('.switch').nth(1); await sw.click(); await page.waitForFunction(() => document.querySelectorAll('.switch')[1].getAttribute('aria-checked') === 'false'); });
-await step('sair', async () => { await page.getByRole('button', { name: 'Sair deste aparelho' }).click(); await page.getByRole('button', { name: 'Entrar com passkey' }).waitFor(); });
-await page.screenshot({ path: `${out}/00-entrar.png` });
-await step('entra de novo com a passkey', async () => { await page.getByRole('button', { name: 'Entrar com passkey' }).click(); await page.locator('.tabs').waitFor({ timeout: 15000 }); await page.getByRole('heading', { name: 'Ajustes' }).waitFor(); });
+await page.locator('#body').evaluate((el, text) => { el.value = text + el.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); }, C.compose);
+await shot('compose');
+await step('send', async () => { await page.getByRole('button', { name: L('Send'), exact: true }).click(); await page.getByText(L('Sent.')).first().waitFor(); });
+await step('agents', async () => { await page.goto(base + '#/agents'); await page.locator('.event').first().waitFor(); });
+await shot('agents');
+await step('settings', async () => { await page.goto(base + '#/settings'); await page.locator('.switch').first().waitFor(); });
+await shot('settings');
 
-// desktop
-const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo' });
+const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, locale, timezoneId: 'America/Sao_Paulo' });
+await desk.addCookies(await ctx.cookies());
 const dp = await desk.newPage();
-dp.on('pageerror', (e) => problems.push(`desk pageerror: ${e.message}`));
-await desk.addCookies((await ctx.cookies()).map((c) => ({ ...c })));
-await step('desktop: lista e mensagem lado a lado', async () => {
-  await dp.goto(invite.replace(/#.*/, '#/m/contato/3'));
-  await dp.getByRole('heading', { name: 'Orçamento para o e-mail da clínica' }).waitFor();
+dp.on('pageerror', (e) => problems.push(`desktop pageerror: ${e.message}`));
+await step('desktop: list and conversation side by side', async () => {
+  await dp.goto(base + '#/m/contact/3');
+  await dp.getByRole('heading', { name: clinic }).waitFor();
   await dp.locator('.row').first().waitFor();
 });
-await dp.waitForTimeout(800);
-await dp.screenshot({ path: `${out}/07-desktop.png` });
-console.log(problems.length ? `\nPROBLEMAS:\n${problems.join('\n')}` : '\nsem erros de console nem CSP');
+await dp.waitForTimeout(1200);
+await dp.screenshot({ path: `${out}/desktop.png` });
 await browser.close();
+console.log(problems.length ? `\nPROBLEMS (${lang}):\n${problems.join('\n')}` : `\n${lang}: no console or CSP errors`);
+if (problems.length) process.exit(1);

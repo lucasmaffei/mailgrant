@@ -31,21 +31,9 @@ svg.w { position: absolute; inset: 0; }
 <div class="box" id="m2" style="top:332px"><b id="b2"></b><span class="mono" id="n2"></span></div>
 <div class="box off" id="m3" style="top:438px"><b id="b3"></b><span class="mono" id="n3"></span></div>
 <div class="audit mono" id="audit"></div>
+<script src="art-text.js"></script>
 <script>
-const pt = new URLSearchParams(location.search).get('lang') === 'pt-BR';
-const T = pt ? {
-  h: ['Quem usa', 'O gateway', 'Suas caixas'],
-  you: ['Você, no app web', 'passkey · tudo que o config der'],
-  pts: [['Confere toda chamada', 'contra as caixas e os escopos.'], ['Esconde o resto.', 'Caixa fora da permissão parece não existir.'], ['Guarda as senhas.', 'Ninguém mais as vê.'], ['Registra e avisa:', 'auditoria e push no celular.']],
-  boxes: [['contato@loja.com.br', 'hermes, support-bot, você'], ['financeiro@loja.com.br', 'finance-bot, você'], ['lucas@loja.com.br', 'hermes, você'], ['diretoria@loja.com.br', 'ninguém']],
-  denied: 'negado: finance-bot não tem send', a: ['finance-bot', 'hermes'],
-} : {
-  h: ['Who uses it', 'The gateway', 'Your mailboxes'],
-  you: ['You, in the web app', 'passkey · whatever the config grants'],
-  pts: [['Checks every call', 'against mailboxes and scopes.'], ['Hides the rest.', 'A mailbox outside a grant looks like it doesn’t exist.'], ['Keeps the passwords.', 'Nobody else sees them.'], ['Records and tells you:', 'audit log and phone push.']],
-  boxes: [['contact@shop.com', 'hermes, support-bot, you'], ['billing@shop.com', 'finance-bot, you'], ['lucas@shop.com', 'hermes, you'], ['ceo@shop.com', 'nobody']],
-  denied: 'denied: finance-bot has no send', a: ['finance-bot', 'hermes'],
-};
+const T = A.how;
 T.h.forEach((t, i) => document.getElementById('h' + i).textContent = t);
 document.getElementById('you').textContent = T.you[0]; document.getElementById('yousub').textContent = T.you[1];
 document.getElementById('pts').innerHTML = T.pts.map(([b, r]) => `<li><b>${b}</b> ${r}</li>`).join('');
