@@ -28,7 +28,7 @@ extra dependencies loaded.
 | Writing | Reply, reply all, forward (attachments included), Cc and Bcc, attach files from the phone, a signature per mailbox. Replies stay in the thread and are filed in Sent. |
 | Drafts | What you write is saved to the mailbox's own Drafts folder a few seconds after you stop typing, so it also shows up in other mail apps. Closing the editor keeps it; opening and closing without writing leaves nothing behind. |
 | Agents | The audit trail as a timeline: reads, sends, trash moves, and every refusal — filter by sends or by refusals. |
-| Settings | Choose the language, turn notifications on, pick which mailboxes notify, get a push when an agent sends mail, manage passkeys, see each agent's access. |
+| Settings | A list of sections, each its own page (side by side on a computer): mailboxes and agents (with `manage`), notifications, reading (conversations, remote images), signatures, language, passkeys and devices, about. |
 
 Organizing works on one message or many: a star, read/unread, **archive** and
 trash. On the phone, swipe a row right to toggle read, left to archive, and
@@ -109,7 +109,7 @@ the application's **Terminal** tab.
 Open the link on the phone or computer that will hold the passkey, name the
 device and confirm with Face ID / Touch ID. You are in.
 
-**More devices:** in the app, **Ajustes → Adicionar outro aparelho** creates a
+**More devices:** in the app, **Ajustes → Passkeys e aparelhos → Adicionar outro aparelho** creates a
 new invite to open on the other device. A signed-in device can also register
 another passkey for itself. The last passkey can't be removed, so you can't
 lock yourself out by accident; if you lose every device, run `mailgrant invite`
@@ -122,10 +122,10 @@ added to the Home Screen:
 
 1. Open the URL in Safari, tap **Share → Add to Home Screen**.
 2. Open mailgrant from the new icon (not from Safari).
-3. **Ajustes → Ativar notificações**, and allow when iOS asks.
+3. **Ajustes → Notificações → Ativar notificações**, and allow when iOS asks.
 
 **Android / desktop Chrome, Edge, Firefox** — open the URL, sign in,
-**Ajustes → Ativar notificações**. Chrome and Edge also offer **Install app**.
+**Ajustes → Notificações → Ativar notificações**. Chrome and Edge also offer **Install app**.
 
 Then choose which mailboxes notify. **Testar** sends a test push to every
 device that turned notifications on.
@@ -144,7 +144,7 @@ the browser vendor's push service (Apple, Google, Mozilla).
 
 ## Manage mailboxes and agents in the app (optional)
 
-With `manage: true`, **Ajustes** gets two more lists: your mailboxes and your
+With `manage: true`, **Ajustes** gets two more sections: your mailboxes and your
 agents. Add a mailbox (with **Testar conexão** to check the server, port and
 password first), give an agent access to some mailboxes and scopes, take a
 scope away, issue a new token, remove an agent. Changes apply at once, on

@@ -189,7 +189,6 @@
  "Link copied.": "链接已复制。",
  "Copy": "复制",
  "Share": "共享",
- "Agents with access": "有访问权限的智能体",
  "Doesn't delete": "不能删除",
  "all mailboxes": "所有邮箱",
  "Agent permissions live in the server's config.": "智能体的权限写在服务器的配置文件里。",
@@ -300,5 +299,17 @@
  },
  "ok, {n} folder": {
   "other": "正常，{n} 个文件夹"
+ },
+ "About": "关于",
+ "Conversations and remote images": "会话和外部图片",
+ "Off on this device": "此设备已关闭",
+ "One per mailbox": "每个邮箱一个",
+ "Passkeys and devices": "通行密钥和设备",
+ "Source code and documentation": "源代码和文档",
+ "{n} agent": {
+  "other": "{n} 个智能体"
+ },
+ "{n} passkey": {
+  "other": "{n} 个通行密钥"
  }
 }

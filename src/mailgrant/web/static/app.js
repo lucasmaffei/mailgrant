@@ -156,6 +156,7 @@ const ICONS = {
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   check: '<path d="m5 12 4.5 4.5L19 7"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
 };
 
 function icon(name) {
@@ -1516,104 +1517,161 @@ function agentsPane() {
   );
 }
 
+// Settings are grouped the way a phone's are: a list of sections, each one its
+// own page. On a computer the list stays on the left and the section opens
+// beside it. #/settings/<key> names the section.
+function settingsSections() {
+  const p = state.prefs;
+  const agents = state.me.manage ? state.admin?.agents : state.agents?.agents;
+  return [
+    state.me.manage && { key: "mailboxes", title: t("Email mailboxes"), summary: state.admin && tn(state.admin.mailboxes.length, "{n} mailbox", "{n} mailboxes"), body: mailboxesSection },
+    { key: "agents", title: t("Agents"), summary: agents && tn(agents.length, "{n} agent", "{n} agents"), body: agentsSection },
+    { key: "notifications", title: t("Notifications"), summary: state.push.subscribed ? t("On for this device.") : t("Off on this device"), body: notificationsSection },
+    p && { key: "reading", title: t("Reading"), summary: t("Conversations and remote images"), body: readingSection },
+    p && can("send") && Object.keys(p.signatures).length > 0 && { key: "signatures", title: t("Signatures"), summary: t("One per mailbox"), body: signaturesSection },
+    p && { key: "language", title: t("Language"), summary: LANGS[lang], body: languageSection },
+    { key: "devices", title: t("Passkeys and devices"), summary: state.passkeys && tn(state.passkeys.length, "{n} passkey", "{n} passkeys"), body: devicesSection },
+    { key: "about", title: t("About"), summary: `mailgrant ${state.me.version}`, body: aboutSection },
+  ].filter(Boolean);
+}
+
+const savePrefs = async (patch) => { state.prefs = await api("/prefs", { method: "PUT", body: patch }); render(); };
+const sw = (checked, label, onChange) => h("button", { type: "button", class: "switch", role: "switch", "aria-checked": checked ? "true" : "false", "aria-label": label, onClick: onChange });
+
 function settingsPane() {
+  const sections = settingsSections();
+  const asked = route().args[0];
+  // Phones start at the list; a computer always shows a section next to it.
+  const current = sections.find((x) => x.key === asked) || (WIDE.matches ? sections[0] : null);
+  const nav = h("nav", { class: "plain settings-nav", "aria-label": t("Settings") },
+    sections.map((x) => h("a", { class: "item link-item", href: `#/settings/${x.key}`, "aria-current": x === current ? "page" : null },
+      h("span", { class: "grow" }, h("span", {}, x.title), x.summary && h("span", { class: "detail" }, x.summary)),
+      icon("chevron"))));
+  const body = current && h("div", { class: "settings-body" }, h("h2", { class: "settings-title" }, current.title), current.body());
+  if (!WIDE.matches && current) {
+    return h("section", { class: "pane pane-detail", "aria-label": current.title },
+      h("div", { class: "detail-bar" }, h("a", { class: "back", href: "#/settings" }, icon("back"), t("Settings"))),
+      h("div", { class: "scroll padded", "data-key": `settings:${current.key}` }, body));
+  }
+  return h("section", { class: "pane pane-detail", "aria-label": t("Settings") },
+    h("header", { class: "hdr" }, h("div", { class: "hdr-title" }, menuButton(), h("h1", { class: "title" }, t("Settings")))),
+    h("div", { class: "scroll padded", "data-key": `settings:${current?.key || "list"}` },
+      WIDE.matches ? h("div", { class: "settings-grid" }, nav, body) : nav));
+}
+
+function notificationsSection() {
   const p = state.prefs;
   const boxes = state.me.mailboxes.filter((m) => m.imap);
-  const savePrefs = async (patch) => { state.prefs = await api("/prefs", { method: "PUT", body: patch }); render(); };
-  const sw = (checked, label, onChange) => h("button", { type: "button", class: "switch", role: "switch", "aria-checked": checked ? "true" : "false", "aria-label": label, onClick: onChange });
   const needsInstall = isIOS() && !standalone();
+  return [
+    h("div", { class: "box" },
+      needsInstall ? [
+        h("strong", { class: "medium" }, t("On iPhone, notifications only arrive with mailgrant on the Home Screen.")),
+        h("ol", {}, h("li", {}, t("Tap Share in Safari.")), h("li", {}, t("Choose Add to Home Screen.")), h("li", {}, t("Open it from the icon and come back here."))),
+      ] : !state.push.supported ? h("span", {}, t("This browser can't receive notifications.")) :
+      state.push.subscribed ? [
+        h("span", {}, t("On for this device.")),
+        h("div", { class: "btn-row" },
+          h("button", { class: "btn ghost small", onClick: async () => { const r = await api("/push/test", { method: "POST" }); toast(r.sent ? t("push|Sent.") : t("No device received it.")); } }, t("Test")),
+          h("button", { class: "btn quiet small", onClick: disablePush }, t("Turn off"))),
+      ] : [
+        h("span", {}, t("Get a notification when email arrives in the mailboxes chosen below.")),
+        h("button", { class: "btn", onClick: enablePush }, t("Turn on notifications")),
+      ]),
+    p && h("div", { class: "plain" },
+      boxes.map((m) => h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, m.address)),
+        sw(p.notify[m.name], t("Notify for {mailbox}", { mailbox: m.address }), () => savePrefs({ notify: { [m.name]: !p.notify[m.name] } })))),
+      h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Notify me when an agent sends email"))),
+        sw(p.notify_agent_send, t("Notify me when an agent sends email"), () => savePrefs({ notify_agent_send: !p.notify_agent_send })))),
+  ];
+}
+
+function readingSection() {
+  const p = state.prefs;
+  return h("div", { class: "plain" },
+    h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Group by conversation")),
+      h("span", { class: "detail" }, t("Replies stay together in the list, and the conversation shows what you sent."))),
+      sw(p.threads, t("Group by conversation"), async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })),
+    h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Always show remote images")),
+      h("span", { class: "detail" }, p.images ? t("On for every sender.")
+        : p.image_senders.length ? t("For now only from: {senders}.", { senders: p.image_senders.join(", ") })
+        : t("A remote image tells the sender when and where you opened the email."))),
+      sw(p.images, t("Always show remote images"), () => savePrefs({ images: !p.images }))),
+    p.image_senders.length > 0 && h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Forget the allowed senders"))),
+      h("button", { type: "button", class: "btn small ghost", onClick: () => savePrefs({ image_senders: [] }) }, t("Forget"))));
+}
+
+function signaturesSection() {
+  const p = state.prefs;
+  return [
+    h("div", { class: "plain" }, Object.keys(p.signatures).map((name) => h("div", { class: "item sig" },
+      h("label", { for: `sig-${name}`, class: "mono" }, boxByName(name)?.address || name),
+      h("textarea", { id: `sig-${name}`, class: "sig-text", rows: 3, maxlength: 2000, placeholder: t("No signature"),
+        onChange: async (e) => { await savePrefs({ signatures: { [name]: e.target.value } }); toast(t("Signature saved.")); } },
+        p.signatures[name])))),
+    h("p", { class: "note tight" }, t("Added at the end of every new email, reply and forward from that mailbox.")),
+  ];
+}
+
+function languageSection() {
+  const p = state.prefs;
+  return h("div", { class: "plain" },
+    h("div", { class: "field" }, h("label", { for: "lang" }, t("Interface")),
+      h("select", { id: "lang", onChange: async (e) => {
+        const choice = e.target.value;
+        await setLanguage(choice);
+        state.prefs = await api("/prefs", { method: "PUT", body: { lang: choice, ui_lang: lang } });
+        render();
+      } },
+        h("option", { value: "", selected: !p.lang ? true : null }, t("Automatic ({language})", { language: LANGS[pickLang("")] })),
+        Object.entries(LANGS).map(([code, name]) => h("option", { value: code, lang: code, selected: p.lang === code ? true : null }, name)))));
+}
+
+function devicesSection() {
   const invite = async () => {
     const r = await api("/invites", { method: "POST" });
     state.newInvite = r.url;
     render();
   };
-  return h("section", { class: "pane pane-detail", "aria-label": t("Settings") },
-    h("header", { class: "hdr" }, h("div", { class: "hdr-title" }, menuButton(), h("h1", { class: "title" }, t("Settings")))),
-    h("div", { class: "scroll padded", "data-key": "settings" },
-      state.me.manage && manageSections(),
-      h("section", { class: "section" + (state.me.manage ? "" : " first") },
-        h("h2", {}, t("Notifications")),
-        h("div", { class: "box" },
-          needsInstall ? [
-            h("strong", { class: "medium" }, t("On iPhone, notifications only arrive with mailgrant on the Home Screen.")),
-            h("ol", {}, h("li", {}, t("Tap Share in Safari.")), h("li", {}, t("Choose Add to Home Screen.")), h("li", {}, t("Open it from the icon and come back here."))),
-          ] : !state.push.supported ? h("span", {}, t("This browser can't receive notifications.")) :
-          state.push.subscribed ? [
-            h("span", {}, t("On for this device.")),
-            h("div", { class: "btn-row" },
-              h("button", { class: "btn ghost small", onClick: async () => { const r = await api("/push/test", { method: "POST" }); toast(r.sent ? t("push|Sent.") : t("No device received it.")); } }, t("Test")),
-              h("button", { class: "btn quiet small", onClick: disablePush }, t("Turn off"))),
-          ] : [
-            h("span", {}, t("Get a notification when email arrives in the mailboxes chosen below.")),
-            h("button", { class: "btn", onClick: enablePush }, t("Turn on notifications")),
-          ]),
-        p && h("div", { class: "plain" },
-          boxes.map((m) => h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, m.address)),
-            sw(p.notify[m.name], t("Notify for {mailbox}", { mailbox: m.address }), () => savePrefs({ notify: { [m.name]: !p.notify[m.name] } })))),
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Notify me when an agent sends email"))),
-            sw(p.notify_agent_send, t("Notify me when an agent sends email"), () => savePrefs({ notify_agent_send: !p.notify_agent_send }))))),
-      p && h("section", { class: "section" },
-        h("h2", {}, t("Reading")),
-        h("div", { class: "plain" },
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Group by conversation")),
-            h("span", { class: "detail" }, t("Replies stay together in the list, and the conversation shows what you sent."))),
-            sw(p.threads, t("Group by conversation"), async () => { await savePrefs({ threads: !p.threads }); state.listKey = null; clearThread(); })),
-          h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Always show remote images")),
-            h("span", { class: "detail" }, p.images ? t("On for every sender.")
-              : p.image_senders.length ? t("For now only from: {senders}.", { senders: p.image_senders.join(", ") })
-              : t("A remote image tells the sender when and where you opened the email."))),
-            sw(p.images, t("Always show remote images"), () => savePrefs({ images: !p.images }))),
-          p.image_senders.length > 0 && h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, t("Forget the allowed senders"))),
-            h("button", { type: "button", class: "btn small ghost", onClick: () => savePrefs({ image_senders: [] }) }, t("Forget"))))),
-      p && h("section", { class: "section" },
-        h("h2", {}, t("Language")),
-        h("div", { class: "plain" },
-          h("div", { class: "field" }, h("label", { for: "lang" }, t("Interface")),
-            h("select", { id: "lang", onChange: async (e) => {
-              const choice = e.target.value;
-              await setLanguage(choice);
-              state.prefs = await api("/prefs", { method: "PUT", body: { lang: choice, ui_lang: lang } });
-              render();
-            } },
-              h("option", { value: "", selected: !p.lang ? true : null }, t("Automatic ({language})", { language: LANGS[pickLang("")] })),
-              Object.entries(LANGS).map(([code, name]) => h("option", { value: code, lang: code, selected: p.lang === code ? true : null }, name)))))),
-      p && can("send") && Object.keys(p.signatures).length > 0 && h("section", { class: "section" },
-        h("h2", {}, t("Signatures")),
-        h("div", { class: "plain" }, Object.keys(p.signatures).map((name) => h("div", { class: "item sig" },
-          h("label", { for: `sig-${name}`, class: "mono" }, boxByName(name)?.address || name),
-          h("textarea", { id: `sig-${name}`, class: "sig-text", rows: 3, maxlength: 2000, placeholder: t("No signature"),
-            onChange: async (e) => { await savePrefs({ signatures: { [name]: e.target.value } }); toast(t("Signature saved.")); } },
-            p.signatures[name])))),
-        h("p", { class: "note tight" }, t("Added at the end of every new email, reply and forward from that mailbox."))),
-      h("section", { class: "section" },
-        h("h2", {}, "Passkeys"),
-        h("div", { class: "plain" },
-          (state.passkeys || []).map((k) => h("div", { class: "item" },
-            h("span", { class: "grow" }, h("span", {}, k.name), h("span", { class: "mono" }, k.last_used_at ? t("used {when}", { when: when(k.last_used_at, { withTime: true }) }) : t("never used"))),
-            (state.passkeys || []).length > 1 && h("button", { class: "btn quiet small", onClick: async () => {
-              await api(`/passkeys/${encodeURIComponent(k.id)}`, { method: "DELETE" }); await loadSettings(); toast(t("Passkey removed.")); } }, t("Remove")))),
-          h("div", { class: "item" }, h("button", { class: "btn quiet small link-btn", onClick: invite }, t("Add another device")))),
-        state.newInvite && h("div", { class: "box" },
-          h("span", {}, t("Open this link on the other device. It works once, for 30 minutes.")),
-          h("span", { class: "link" }, state.newInvite),
-          h("div", { class: "btn-row" },
-            h("button", { class: "btn ghost small", onClick: () => navigator.clipboard?.writeText(state.newInvite).then(() => toast(t("Link copied."))) }, t("Copy")),
-            navigator.share && h("button", { class: "btn ghost small", onClick: () => navigator.share({ url: state.newInvite }).catch(() => {}) }, t("Share"))))),
-      !state.me.manage && h("section", { class: "section" },
-        h("h2", {}, t("Agents with access")),
-        h("div", { class: "plain" }, (state.agents?.agents || []).map((a) => h("div", { class: "item" },
-          h("span", { class: "grow" },
-            h("span", { class: "medium" }, a.name),
-            h("span", { class: "detail" }, `${[["read", "mark", "send", "delete"].filter((s) => a.scopes.includes(s)).map(scopeWord).join(", "),
-              !a.scopes.includes("delete") && t("Doesn't delete")].filter(Boolean).join(". ")}.`)),
-          h("span", { class: "mono" }, a.mailboxes === "*" ? t("all mailboxes") : tn(a.mailboxes.length, "{n} mailbox", "{n} mailboxes"))))),
-        h("p", { class: "note tight" }, t("Agent permissions live in the server's config."))),
-      h("section", { class: "section" },
-        h("div", { class: "plain" },
-          h("div", { class: "item" }, h("button", { class: "btn quiet small bare", onClick: async () => { await api("/auth/logout", { method: "POST" }); state.authed = false; render(); } }, t("Sign out of this device")),
-            h("span", { class: "grow" }), h("span", { class: "mono" }, `mailgrant ${state.me.version}`)))),
-    ),
-  );
+  return [
+    h("div", { class: "plain" },
+      (state.passkeys || []).map((k) => h("div", { class: "item" },
+        h("span", { class: "grow" }, h("span", {}, k.name), h("span", { class: "mono" }, k.last_used_at ? t("used {when}", { when: when(k.last_used_at, { withTime: true }) }) : t("never used"))),
+        (state.passkeys || []).length > 1 && h("button", { class: "btn quiet small", onClick: async () => {
+          await api(`/passkeys/${encodeURIComponent(k.id)}`, { method: "DELETE" }); await loadSettings(); toast(t("Passkey removed.")); } }, t("Remove")))),
+      h("div", { class: "item" }, h("button", { class: "btn quiet small link-btn", onClick: invite }, t("Add another device")))),
+    state.newInvite && h("div", { class: "box" },
+      h("span", {}, t("Open this link on the other device. It works once, for 30 minutes.")),
+      h("span", { class: "link" }, state.newInvite),
+      h("div", { class: "btn-row" },
+        h("button", { class: "btn ghost small", onClick: () => navigator.clipboard?.writeText(state.newInvite).then(() => toast(t("Link copied."))) }, t("Copy")),
+        navigator.share && h("button", { class: "btn ghost small", onClick: () => navigator.share({ url: state.newInvite }).catch(() => {}) }, t("Share")))),
+    h("div", { class: "plain spaced" },
+      h("div", { class: "item" }, h("button", { class: "btn quiet small bare", onClick: async () => { await api("/auth/logout", { method: "POST" }); state.authed = false; render(); } }, t("Sign out of this device")))),
+  ];
+}
+
+function aboutSection() {
+  return h("div", { class: "plain" },
+    h("div", { class: "item" }, h("span", { class: "grow" }, h("span", {}, "mailgrant"), h("span", { class: "mono" }, state.me.version))),
+    state.me.manage && h("div", { class: "item" },
+      h("span", { class: "grow" }, h("span", {}, t("Download config")), h("span", { class: "detail" }, t("A backup with the passwords. Keep it somewhere safe."))),
+      h("button", { class: "btn ghost small", onClick: exportConfig }, t("Download"))),
+    h("a", { class: "item link-item", href: "https://github.com/lucasmaffei/mailgrant", target: "_blank", rel: "noopener noreferrer" },
+      h("span", { class: "grow" }, h("span", {}, t("Source code and documentation")), h("span", { class: "mono" }, "github.com/lucasmaffei/mailgrant"))));
+}
+
+function agentsSection() {
+  if (state.me.manage) return manageAgents();
+  return [
+    h("div", { class: "plain" }, (state.agents?.agents || []).map((a) => h("div", { class: "item" },
+      h("span", { class: "grow" },
+        h("span", { class: "medium" }, a.name),
+        h("span", { class: "detail" }, `${[["read", "mark", "send", "delete"].filter((s) => a.scopes.includes(s)).map(scopeWord).join(", "),
+          !a.scopes.includes("delete") && t("Doesn't delete")].filter(Boolean).join(". ")}.`)),
+      h("span", { class: "mono" }, a.mailboxes === "*" ? t("all mailboxes") : tn(a.mailboxes.length, "{n} mailbox", "{n} mailboxes"))))),
+    h("p", { class: "note tight" }, t("Agent permissions live in the server's config.")),
+  ];
 }
 
 // ── managing mailboxes and agents (web.manage) ─────────────────────────────
@@ -1744,7 +1802,7 @@ function saveMailbox() {
     state.form = null;
     state.me = await api("/me");
     refreshCounts();
-    go(f.isNew ? `/settings/mailbox/${enc(m.name)}` : "/settings");
+    go(f.isNew ? `/settings/mailbox/${enc(m.name)}` : "/settings/mailboxes");
   });
 }
 
@@ -1764,7 +1822,7 @@ function deleteMailbox() {
     toast(t("Mailbox removed from mailgrant. The email stays on the server."));
     state.form = null;
     state.me = await api("/me");
-    go("/settings");
+    go("/settings/mailboxes");
   });
 }
 
@@ -1790,7 +1848,7 @@ function saveAgent() {
       toast(t("Permissions saved. They apply from now on."));
       state.form = null;
       state.agents = null;
-      go("/settings");
+      go("/settings/agents");
     }
   });
 }
@@ -1814,7 +1872,7 @@ function deleteAgent() {
     toast(t("{agent} no longer has access to anything.", { agent: f.existing.name }));
     state.form = null;
     state.agents = null;
-    go("/settings");
+    go("/settings/agents");
   });
 }
 
@@ -1871,7 +1929,7 @@ function toggleRow(label, on, onClick, detail) {
 function formPane(title, body, actions) {
   return h("section", { class: "pane pane-detail", "aria-label": title },
     h("div", { class: "compose-bar" },
-      h("a", { class: "btn quiet small", href: "#/settings" }, t("Back")),
+      h("a", { class: "btn quiet small", href: route().args[0] === "agent" ? "#/settings/agents" : "#/settings/mailboxes" }, t("Back")),
       h("strong", { class: "bar-title" }, title),
       actions || h("span", { class: "bar-spacer" })),
     h("div", { class: "scroll padded", "data-key": `form:${state.form?.key || state.reveal?.agent}` }, body));
@@ -1951,32 +2009,29 @@ function agentPane() {
   ], h("button", { class: "btn small", disabled: state.busy, onClick: saveAgent }, f.isNew ? t("Create") : t("Save")));
 }
 
-function manageSections() {
+function mailboxesSection() {
   const a = state.admin;
-  if (!a) return h("section", { class: "section" }, h("div", { class: "empty" }, t("Loading…")));
+  if (!a) return h("div", { class: "empty" }, t("Loading…"));
+  return h("div", { class: "plain" },
+    a.mailboxes.map((m) => h("a", { class: "item link-item", href: `#/settings/mailbox/${enc(m.name)}` },
+      h("span", { class: "grow" }, h("span", {}, m.address),
+        h("span", { class: "mono" }, [m.imap && t("receives"), m.smtp && t("sends")].filter(Boolean).join(" · "))),
+      h("span", { class: "mono" }, m.name))),
+    h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/mailbox/new" }, t("Add mailbox"))));
+}
+
+function manageAgents() {
+  const a = state.admin;
+  if (!a) return h("div", { class: "empty" }, t("Loading…"));
   const scopeText = (s) => scopeInfo().filter(([k]) => s.includes(k)).map(([, l]) => l.toLocaleLowerCase(lang)).join(", ");
   return [
-    h("section", { class: "section first" },
-      h("h2", {}, t("Email mailboxes")),
-      h("div", { class: "plain" },
-        a.mailboxes.map((m) => h("a", { class: "item link-item", href: `#/settings/mailbox/${enc(m.name)}` },
-          h("span", { class: "grow" }, h("span", {}, m.address),
-            h("span", { class: "mono" }, [m.imap && t("receives"), m.smtp && t("sends")].filter(Boolean).join(" · "))),
-          h("span", { class: "mono" }, m.name))),
-        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/mailbox/new" }, t("Add mailbox"))))),
-    h("section", { class: "section" },
-      h("h2", {}, t("Agents")),
-      h("div", { class: "plain" },
-        a.agents.map((x) => h("a", { class: "item link-item", href: `#/settings/agent/${enc(x.name)}` },
-          h("span", { class: "grow" }, h("span", { class: "medium" }, x.name),
-            h("span", { class: "detail" }, `${scopeText(x.scopes)}${x.description ? ` · ${x.description}` : ""}`)),
-          h("span", { class: "mono" }, x.mailboxes === "*" ? t("all") : tn(x.mailboxes.length, "{n} mailbox", "{n} mailboxes")))),
-        h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/agent/new" }, t("Add agent")))),
-      h("p", { class: "note tight" }, t("Changes apply at once, without a restart. Saving asks for Face ID again."))),
-    h("section", { class: "section" },
-      h("div", { class: "plain" }, h("div", { class: "item" },
-        h("span", { class: "grow" }, h("span", {}, t("Download config")), h("span", { class: "detail" }, t("A backup with the passwords. Keep it somewhere safe."))),
-        h("button", { class: "btn ghost small", onClick: exportConfig }, t("Download"))))),
+    h("div", { class: "plain" },
+      a.agents.map((x) => h("a", { class: "item link-item", href: `#/settings/agent/${enc(x.name)}` },
+        h("span", { class: "grow" }, h("span", { class: "medium" }, x.name),
+          h("span", { class: "detail" }, `${scopeText(x.scopes)}${x.description ? ` · ${x.description}` : ""}`)),
+        h("span", { class: "mono" }, x.mailboxes === "*" ? t("all") : tn(x.mailboxes.length, "{n} mailbox", "{n} mailboxes")))),
+      h("div", { class: "item" }, h("a", { class: "btn quiet small link-btn", href: "#/settings/agent/new" }, t("Add agent")))),
+    h("p", { class: "note tight" }, t("Changes apply at once, without a restart. Saving asks for Face ID again.")),
   ];
 }
 

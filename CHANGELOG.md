@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.0 — Settings in sections
+
+- **Settings is a list of sections**, each on its own page: Email mailboxes and Agents (with `manage`), Notifications, Reading, Signatures, Language, Passkeys and devices, About. On a phone the list opens each section with a back button; on a computer the list stays on the left and the section opens beside it. Each row says where things stand (how many mailboxes and agents, notifications on or off, the current language).
+- Links go straight to a section (`#/settings/notifications`, `#/settings/language`…); after saving a mailbox or an agent the app returns to its section.
+- **Download config** moved to About, next to the version and a link to the source.
+
 ## v0.11.0 — five languages, open source
 
 - **The web app speaks English, Português (Brasil), Español, Français and 简体中文.** It follows the device's language until you pick one in Settings; the choice applies at once, on every device, and push notifications follow it. Dates, times and sizes use the language's own formats. Adding a language is one JSON file (see CONTRIBUTING.md).

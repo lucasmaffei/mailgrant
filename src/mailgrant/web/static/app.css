@@ -337,3 +337,16 @@ a.link-item:hover { background: rgba(255, 255, 255, 0.015); }
 .side nav a span:first-child { white-space: normal; overflow-wrap: anywhere; }
 .side.drawer nav a { min-height: 40px; }
 
+
+/* ── settings: a list of sections, each its own page ─────────────────────── */
+
+.settings-nav .item svg { width: 16px; height: 16px; color: var(--faint); flex: none; }
+.settings-title { margin: 8px 0 16px; padding: 0 20px; font-family: var(--display); font-size: 22px; font-weight: 500; letter-spacing: -0.01em; }
+.settings-body > .plain + .plain, .settings-body .plain.spaced { margin-top: 24px; }
+.settings-body > .box { margin: 16px 20px; }
+@media (min-width: 1000px) {
+  .settings-grid { display: grid; grid-template-columns: 300px minmax(0, 640px); gap: 40px; align-items: start; padding-top: 8px; }
+  .settings-nav { position: sticky; top: 0; }
+  .settings-nav .item[aria-current="page"] { background: var(--raised); }
+  .settings-title { margin-top: 0; }
+}

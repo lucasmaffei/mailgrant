@@ -28,7 +28,7 @@ nenhum banco, nenhuma dependência extra carregada.
 | Escrever | Responder, responder a todos, encaminhar (com os anexos), Cc e Cco, anexar arquivos do celular, uma assinatura por caixa. Respostas entram na mesma conversa e ficam em Enviados. |
 | Rascunhos | O que você escreve é salvo na pasta Rascunhos da própria caixa alguns segundos depois que você para de digitar, então aparece também em outros apps de e-mail. Fechar o editor guarda o rascunho; abrir e fechar sem escrever não deixa nada. |
 | Agentes | A auditoria como linha do tempo: leituras, envios, idas para a lixeira e cada recusa, com filtro por envios ou por barrados. |
-| Ajustes | Escolher o idioma, ligar notificações, escolher quais caixas notificam, receber push quando um agente enviar e-mail, gerenciar passkeys, ver o acesso de cada agente. |
+| Ajustes | Uma lista de seções, cada uma na sua página (lado a lado no computador): caixas e agentes (com `manage`), notificações, leitura (conversas, imagens externas), assinaturas, idioma, passkeys e aparelhos, sobre. |
 
 Organizar funciona em uma mensagem ou em várias: estrela, lida/não lida,
 **arquivar** e lixeira. No celular, deslize a linha para a direita para marcar
@@ -110,7 +110,7 @@ aba **Terminal** da aplicação.
 Abra o link no celular ou computador que vai guardar a passkey, dê um nome ao
 aparelho e confirme com Face ID / Touch ID. Pronto, você entrou.
 
-**Outros aparelhos:** no app, **Ajustes → Adicionar outro aparelho** gera um
+**Outros aparelhos:** no app, **Ajustes → Passkeys e aparelhos → Adicionar outro aparelho** gera um
 convite novo para abrir no outro aparelho. A última passkey não pode ser
 removida, para você não se trancar para fora por engano; se perder todos os
 aparelhos, rode `mailgrant invite` no servidor de novo.
@@ -122,10 +122,10 @@ app na Tela de Início.
 
 1. Abra a URL no Safari e toque em **Compartilhar → Adicionar à Tela de Início**.
 2. Abra o mailgrant pelo ícone novo (não pelo Safari).
-3. **Ajustes → Ativar notificações**, e permita quando o iOS perguntar.
+3. **Ajustes → Notificações → Ativar notificações**, e permita quando o iOS perguntar.
 
 **Android / Chrome, Edge e Firefox no computador**: abra a URL, entre,
-**Ajustes → Ativar notificações**. Chrome e Edge também oferecem **Instalar app**.
+**Ajustes → Notificações → Ativar notificações**. Chrome e Edge também oferecem **Instalar app**.
 
 Depois escolha quais caixas notificam. **Testar** manda um push de teste para
 todos os aparelhos com notificação ligada.
@@ -145,7 +145,7 @@ push do fabricante do navegador (Apple, Google, Mozilla).
 
 ## Gerenciar caixas e agentes pelo app (opcional)
 
-Com `manage: true`, os **Ajustes** ganham duas listas: suas caixas e seus
+Com `manage: true`, os **Ajustes** ganham duas seções: suas caixas e seus
 agentes. Dá para adicionar uma caixa (com **Testar conexão** para conferir
 servidor, porta e senha antes), dar a um agente acesso a algumas caixas e
 permissões, tirar uma permissão, gerar um token novo, remover um agente. As

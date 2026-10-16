@@ -189,7 +189,6 @@
  "Link copied.": "Lien copié.",
  "Copy": "Copier",
  "Share": "Partager",
- "Agents with access": "Agents ayant accès",
  "Doesn't delete": "Ne supprime pas",
  "all mailboxes": "toutes les boîtes",
  "Agent permissions live in the server's config.": "Les autorisations des agents sont dans la configuration du serveur.",
@@ -308,5 +307,19 @@
  "ok, {n} folder": {
   "one": "ok, {n} dossier",
   "other": "ok, {n} dossiers"
+ },
+ "About": "À propos",
+ "Conversations and remote images": "Conversations et images externes",
+ "Off on this device": "Désactivées sur cet appareil",
+ "One per mailbox": "Une par boîte",
+ "Passkeys and devices": "Passkeys et appareils",
+ "Source code and documentation": "Code source et documentation",
+ "{n} agent": {
+  "one": "{n} agent",
+  "other": "{n} agents"
+ },
+ "{n} passkey": {
+  "one": "{n} passkey",
+  "other": "{n} passkeys"
  }
 }

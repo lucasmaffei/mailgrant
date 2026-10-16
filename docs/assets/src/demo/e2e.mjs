@@ -58,7 +58,7 @@ await shot('compose');
 await step('send', async () => { await page.getByRole('button', { name: L('Send'), exact: true }).click(); await page.getByText(L('Sent.')).first().waitFor(); });
 await step('agents', async () => { await page.goto(base + '#/agents'); await page.locator('.event').first().waitFor(); });
 await shot('agents');
-await step('settings', async () => { await page.goto(base + '#/settings'); await page.locator('.switch').first().waitFor(); });
+await step('settings', async () => { await page.goto(base + '#/settings'); await page.locator('.settings-nav').waitFor(); });
 await shot('settings');
 
 const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, locale, timezoneId: 'America/Sao_Paulo' });
