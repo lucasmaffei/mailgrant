@@ -22,7 +22,8 @@ uv run mailgrant http --config config.yaml
 ```
 
 CI runs exactly those checks. The web app is plain JavaScript and CSS under
-`src/mailgrant/web/static/`, with no build step: edit and reload.
+`src/mailgrant/web/static/`, with no build step: edit and reload. The README
+art and screenshots are generated from [`docs/assets/src`](docs/assets/src).
 
 A few rules the code follows:
 

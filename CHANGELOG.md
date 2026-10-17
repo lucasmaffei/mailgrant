@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The README is a guide to installing, configuring and running mailgrant**, in four steps and a day-to-day table, in all five languages. The reference moved to `docs/`: configuration (`configuration.md`), MCP tools and REST API (`api.md`), security (`security.md`), and examples, features and FAQ (`overview.md`). The prompt that lets an agent set itself up is now in `connect-agents.md`.
+- Fix: `docker-compose.yml` now passes the variables in `.env` to the container. Before, a config that referred to `${CONTACT_PASSWORD}` stopped at start with "references unset environment variable" unless you added the variable to the compose file yourself.
+
 ## v0.12.1
 
 - Fix: after an update the browser could pair the new JavaScript with the old stylesheet, and the new Settings came out broken (giant arrows, no columns). Static files now always revalidate (`cache-control: no-cache`), the page loads `app.css` and `app.js` with the version in the URL, and icons carry a size of their own so a missing stylesheet can't blow them up.

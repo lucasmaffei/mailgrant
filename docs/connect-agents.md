@@ -117,6 +117,43 @@ for m in unread:
     print(m["mailbox"], m["subject"], full["body_reader"][:200])
 ```
 
+## Let the agent set itself up
+
+Mint the agent's token, put it in the `MAILGRANT_TOKEN` environment variable
+where the agent runs, and paste this prompt into a conversation with it (swap
+in your URL):
+
+```text
+Connect yourself to my mailgrant email gateway.
+
+- MCP endpoint: https://mail-mcp.example.com/mcp
+- Your token is in the MAILGRANT_TOKEN environment variable. Never print it,
+  never write it to a file in plain text, and never send it anywhere except the
+  Authorization header of that endpoint.
+
+Steps:
+1. Work out which agent harness you're running in and add a remote MCP server
+   named "mailgrant" with the URL above and the header
+   "Authorization: Bearer <token>":
+   - Claude Code: claude mcp add --scope user --transport http mailgrant <url> --header "Authorization: Bearer $MAILGRANT_TOKEN"
+   - Codex: codex mcp add mailgrant --url <url> --bearer-token-env-var MAILGRANT_TOKEN
+   - Anything else: register it in your MCP config as a Streamable HTTP server
+     with that header. If you can only launch stdio servers, use
+     npx -y mcp-remote@0.1.38 <url> --transport http-only --header "Authorization:${AUTH_HEADER}"
+     with AUTH_HEADER="Bearer <token>" in the process env.
+2. Install the usage skill from
+   https://github.com/lucasmaffei/mailgrant/tree/main/.agents/skills/mailgrant
+   (Claude Code: ~/.claude/skills/mailgrant/SKILL.md). If you can't install
+   skills, read the file and follow its rules.
+3. Reload your MCP servers if your harness needs it, then call the whoami tool.
+4. Tell me which agent you are, your scopes, the mailboxes you can use and how
+   many unread messages each one has (inbox with unseen=true). Don't mark
+   anything as read, delete or send anything.
+```
+
+If the agent answers with its own name, scopes and the right mailboxes, it's
+ready. A `401` means the token doesn't match any hash in the config.
+
 ## First conversation
 
 Once connected, ask the agent:

@@ -8,6 +8,10 @@ services:
     ports:
       # Loopback by default: put a TLS reverse proxy in front before exposing it.
       - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
+    # Mailbox passwords and tokens the config refers to as ${NAME}.
+    env_file:
+      - path: .env
+        required: false
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WORKERS: ${WORKERS:-2}
